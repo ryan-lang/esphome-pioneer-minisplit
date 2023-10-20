@@ -1,0 +1,133 @@
+esphome:
+  name: pioneer-minisplit
+  friendly_name: "Pioneer Minisplit"
+  includes:
+    - pioneer_minisplit_uart.h
+
+esp8266:
+  board: esp01_1m
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  fast_connect: true
+  domain: .lan
+  power_save_mode: none
+
+ota:
+
+logger:
+  level: DEBUG
+
+api:
+
+web_server:
+  port: 80
+
+uart:
+  id: uart_bus
+  rx_pin: GPIO13
+  tx_pin: GPIO15
+  baud_rate: 9600
+  stop_bits: 1
+  parity: EVEN
+  data_bits: 8
+  # debug:
+  #   direction: BOTH
+  #   dummy_receiver: false
+  #   after:
+  #     delimiter: "\n"
+  #   sequence:
+  #     - lambda: UARTDebug::log_string(direction, bytes);
+
+custom_component:
+  - id: pioneer_minisplit
+    lambda: |-
+      auto minisplit_component = new PioneerMinisplit(id(uart_bus));
+      return {minisplit_component};
+
+climate:
+  - platform: custom
+    lambda: |-
+      return {pioneer_minisplit_climate(pioneer_minisplit)};
+    climates:
+      - name: "Thermostat"
+        id: main_thermostat
+
+switch:
+  - platform: custom
+    lambda: |-
+      return {
+        pioneer_minisplit_switch_display(pioneer_minisplit),
+        pioneer_minisplit_switch_beep(pioneer_minisplit)
+      };
+    switches:
+      - name: "Display"
+      - name: "Beep"
+        restore_mode: RESTORE_DEFAULT_ON
+
+sensor:
+  - platform: custom
+    lambda: |-
+      return {
+        pioneer_minisplit_sensor_unknown_1(pioneer_minisplit),
+        pioneer_minisplit_sensor_fan_speed_actual(pioneer_minisplit),
+        pioneer_minisplit_sensor_temp_pipe_out(pioneer_minisplit),
+        pioneer_minisplit_sensor_temp_pipe_in(pioneer_minisplit),
+        pioneer_minisplit_sensor_unknown_2(pioneer_minisplit),
+        pioneer_minisplit_sensor_unknown_3(pioneer_minisplit),
+        pioneer_minisplit_sensor_compressor_current(pioneer_minisplit),
+        pioneer_minisplit_sensor_motor_raw(pioneer_minisplit),
+        pioneer_minisplit_sensor_swing_v_pos(pioneer_minisplit),
+        pioneer_minisplit_sensor_swing_h_pos(pioneer_minisplit),
+        pioneer_minisplit_sensor_fault(pioneer_minisplit),
+        pioneer_minisplit_sensor_clean_filter(pioneer_minisplit),
+        pioneer_minisplit_sensor_health(pioneer_minisplit),
+        pioneer_minisplit_sensor_supply_voltage(pioneer_minisplit)
+      };
+    sensors:
+      - name: "Unknown 1"
+        state_class: measurement
+      - name: "Fan Speed Actual"
+        state_class: measurement
+      - name: "Temp Pipe Out"
+        unit_of_measurement: "°C"
+      - name: "Temp Pipe In"
+        unit_of_measurement: "°C"
+      - name: "Unknown 2"
+        state_class: measurement
+      - name: "Unknown 3"
+        state_class: measurement
+      - name: "Compressor Current"
+        unit_of_measurement: "A"
+        state_class: measurement
+        device_class: current
+        accuracy_decimals: 1
+      - name: "Motor Raw"
+      - name: "Swing V Pos"
+      - name: "Swing H Pos"
+      - name: "Fault"
+      - name: "Clean Filter"
+      - name: "Health"
+      - name: "Supply Voltage"
+        unit_of_measurement: "V"
+        state_class: measurement
+        device_class: voltage
+
+binary_sensor:
+  - platform: custom
+    lambda: |-
+      return {
+        pioneer_minisplit_sensor_deep_sleep(pioneer_minisplit)
+      };
+    binary_sensors:
+      - name: "Deep Sleep"
+
+text_sensor:
+  - platform: custom
+    lambda: |-
+      return {
+        pioneer_minisplit_sensor_motor(pioneer_minisplit)
+      };
+    text_sensors:
+      - name: "Motor Speed"
