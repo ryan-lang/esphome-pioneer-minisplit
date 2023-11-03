@@ -13,7 +13,6 @@
 #define pioneer_minisplit_sensor_unknown_3(p) get_pioneer_minisplit(p)->sensor_unknown_3
 #define pioneer_minisplit_sensor_compressor_current(p) get_pioneer_minisplit(p)->sensor_compressor_current
 #define pioneer_minisplit_sensor_motor(p) get_pioneer_minisplit(p)->sensor_motor
-#define pioneer_minisplit_sensor_motor_raw(p) get_pioneer_minisplit(p)->sensor_motor_raw
 #define pioneer_minisplit_sensor_swing_v_pos(p) get_pioneer_minisplit(p)->sensor_swing_v_pos
 #define pioneer_minisplit_sensor_swing_h_pos(p) get_pioneer_minisplit(p)->sensor_swing_h_pos
 #define pioneer_minisplit_sensor_fault(p) get_pioneer_minisplit(p)->sensor_fault
@@ -21,13 +20,9 @@
 #define pioneer_minisplit_sensor_health(p) get_pioneer_minisplit(p)->sensor_health
 #define pioneer_minisplit_sensor_deep_sleep(p) get_pioneer_minisplit(p)->sensor_deep_sleep
 #define pioneer_minisplit_sensor_supply_voltage(p) get_pioneer_minisplit(p)->sensor_supply_voltage
-
-enum PioneerMotorSpeed : uint8_t
-{
-    MOTOR_SPEED_OFF = 0,
-    MOTOR_SPEED_LOW = 1,
-    MOTOR_SPEED_HIGH = 2
-};
+#define pioneer_minisplit_sensor_eco(p) get_pioneer_minisplit(p)->sensor_eco
+#define pioneer_minisplit_sensor_sleep(p) get_pioneer_minisplit(p)->sensor_sleep
+#define pioneer_minisplit_sensor_turbo(p) get_pioneer_minisplit(p)->sensor_turbo
 
 class PioneerMinisplit;
 
@@ -36,26 +31,6 @@ class PioneerMinisplitSwitch : public Switch
 public:
     PioneerMinisplitSwitch(PioneerMinisplit *parent, const std::string &name) : parent_(parent), name_(name) {}
     void write_state(bool state) override;
-
-private:
-    PioneerMinisplit *parent_;
-    std::string name_;
-};
-
-class PioneerMinisplitSensor : public Sensor
-{
-public:
-    PioneerMinisplitSensor(PioneerMinisplit *parent, const std::string &name) : parent_(parent), name_(name) {}
-
-private:
-    PioneerMinisplit *parent_;
-    std::string name_;
-};
-
-class PioneerMinisplitTextSensor : public TextSensor
-{
-public:
-    PioneerMinisplitTextSensor(PioneerMinisplit *parent, const std::string &name) : parent_(parent), name_(name) {}
 
 private:
     PioneerMinisplit *parent_;
@@ -137,46 +112,49 @@ public:
     PioneerMinisplitSwitch *switch_display;
     PioneerMinisplitSwitch *switch_beep;
 
-    PioneerMinisplitSensor *sensor_unknown_1;
-    PioneerMinisplitSensor *sensor_fan_speed_actual;
-    PioneerMinisplitSensor *sensor_temp_pipe_out;
-    PioneerMinisplitSensor *sensor_temp_pipe_in;
-    PioneerMinisplitSensor *sensor_unknown_2;
-    PioneerMinisplitSensor *sensor_unknown_3;
-    PioneerMinisplitSensor *sensor_compressor_current;
-    PioneerMinisplitSensor *sensor_motor_raw;
-    PioneerMinisplitSensor *sensor_swing_v_pos;
-    PioneerMinisplitSensor *sensor_swing_h_pos;
-    PioneerMinisplitSensor *sensor_fault;
-    PioneerMinisplitSensor *sensor_clean_filter;
-    PioneerMinisplitSensor *sensor_health;
-    PioneerMinisplitSensor *sensor_supply_voltage;
-    PioneerMinisplitTextSensor *sensor_motor;
+    Sensor *sensor_unknown_1;
+    Sensor *sensor_fan_speed_actual;
+    Sensor *sensor_temp_pipe_out;
+    Sensor *sensor_temp_pipe_in;
+    Sensor *sensor_unknown_2;
+    Sensor *sensor_unknown_3;
+    Sensor *sensor_compressor_current;
+    Sensor *sensor_motor;
+    Sensor *sensor_swing_v_pos;
+    Sensor *sensor_swing_h_pos;
+    Sensor *sensor_fault;
+    Sensor *sensor_clean_filter;
+    Sensor *sensor_health;
+    Sensor *sensor_supply_voltage;
     BinarySensor *sensor_deep_sleep;
+    BinarySensor *sensor_eco;
+    BinarySensor *sensor_sleep;
+    BinarySensor *sensor_turbo;
 
     PioneerMinisplit(UARTComponent *parent) : Component(), Climate(), UARTDevice(parent), ac_state(new AcState())
     {
         switch_display = new PioneerMinisplitSwitch(this, "display");
         switch_beep = new PioneerMinisplitSwitch(this, "beep");
 
-        sensor_unknown_1 = new PioneerMinisplitSensor(this, "unknown_1");
-        sensor_fan_speed_actual = new PioneerMinisplitSensor(this, "fan_speed_actual");
-        sensor_temp_pipe_out = new PioneerMinisplitSensor(this, "temp_pipe_out");
-        sensor_temp_pipe_in = new PioneerMinisplitSensor(this, "temp_pipe_in");
-        sensor_unknown_2 = new PioneerMinisplitSensor(this, "unknown_2");
-        sensor_unknown_3 = new PioneerMinisplitSensor(this, "unknown_3");
-        sensor_compressor_current = new PioneerMinisplitSensor(this, "compressor_current");
-        sensor_motor_raw = new PioneerMinisplitSensor(this, "motor_raw");
-        sensor_swing_v_pos = new PioneerMinisplitSensor(this, "swing_v_pos");
-        sensor_swing_h_pos = new PioneerMinisplitSensor(this, "swing_h_pos");
-        sensor_fault = new PioneerMinisplitSensor(this, "fault");
-        sensor_clean_filter = new PioneerMinisplitSensor(this, "clean_filter");
-        sensor_health = new PioneerMinisplitSensor(this, "health");
-        sensor_supply_voltage = new PioneerMinisplitSensor(this, "supply_volrage");
-
-        sensor_motor = new PioneerMinisplitTextSensor(this, "motor");
+        sensor_unknown_1 = new Sensor();
+        sensor_fan_speed_actual = new Sensor();
+        sensor_temp_pipe_out = new Sensor();
+        sensor_temp_pipe_in = new Sensor();
+        sensor_unknown_2 = new Sensor();
+        sensor_unknown_3 = new Sensor();
+        sensor_compressor_current = new Sensor();
+        sensor_motor = new Sensor();
+        sensor_swing_v_pos = new Sensor();
+        sensor_swing_h_pos = new Sensor();
+        sensor_fault = new Sensor();
+        sensor_clean_filter = new Sensor();
+        sensor_health = new Sensor();
+        sensor_supply_voltage = new Sensor();
 
         sensor_deep_sleep = new BinarySensor();
+        sensor_eco = new BinarySensor();
+        sensor_sleep = new BinarySensor();
+        sensor_turbo = new BinarySensor();
     }
 
     void setup() override {}
@@ -498,6 +476,10 @@ private:
         {
             this->sensor_deep_sleep->publish_state((state->get(AcState::AC_SLEEP_EXT) == 0x08));
         }
+        if (this->sensor_sleep->state != state->get(AcState::AC_SLEEP))
+        {
+            this->sensor_sleep->publish_state(state->get(AcState::AC_SLEEP));
+        }
 
         // Tracking AC_UNKNOWN_1 change
         if (this->sensor_unknown_1->get_state() != state->get(AcState::AC_UNKNOWN_1))
@@ -562,14 +544,9 @@ private:
         }
 
         // Tracking MOTOR
-        if (this->sensor_motor_raw->get_state() != state->get(AcState::AC_MOTOR))
+        if (this->sensor_motor->get_state() != state->get(AcState::AC_MOTOR))
         {
-            this->sensor_motor_raw->publish_state(state->get(AcState::AC_MOTOR));
-        }
-        std::string new_motor_speed = ac_motor_speed_to_string(state->get(AcState::AC_MOTOR));
-        if (this->sensor_motor->get_state() != new_motor_speed)
-        {
-            this->sensor_motor->publish_state(new_motor_speed);
+            this->sensor_motor->publish_state(state->get(AcState::AC_MOTOR));
         }
 
         // Tracking clean filter
@@ -588,6 +565,18 @@ private:
         if (this->sensor_swing_h_pos->get_state() != state->get(AcState::AC_SWING_H_POS))
         {
             this->sensor_swing_h_pos->publish_state(state->get(AcState::AC_SWING_H_POS));
+        }
+
+        // tracking ECO
+        if (this->sensor_eco->state != state->get(AcState::AC_ECO))
+        {
+            this->sensor_eco->publish_state(state->get(AcState::AC_ECO));
+        }
+
+        // tracking TURBO
+        if (this->sensor_turbo->state != state->get(AcState::AC_TURBO))
+        {
+            this->sensor_turbo->publish_state(state->get(AcState::AC_TURBO));
         }
 
         // tracking PRESET
@@ -610,6 +599,7 @@ private:
             return;
 
         // prevents sending a 2nd command while waiting for response from first
+        // also don't send a command before we've received the first state response
         this->has_state_ack = 0;
 
         // copy and reset the pending state; ac_state_pending will now be null
@@ -932,22 +922,6 @@ private:
             ac_eco = false;
             ac_turbo = false;
             ac_sleep = false;
-        }
-    }
-
-    std::string
-    ac_motor_speed_to_string(uint8_t speed)
-    {
-        switch (speed)
-        {
-        case MOTOR_SPEED_OFF:
-            return "OFF";
-        case MOTOR_SPEED_LOW:
-            return "LOW";
-        case MOTOR_SPEED_HIGH:
-            return "HIGH";
-        default:
-            return "UNKNOWN";
         }
     }
 };

@@ -77,7 +77,7 @@ sensor:
         pioneer_minisplit_sensor_unknown_2(pioneer_minisplit),
         pioneer_minisplit_sensor_unknown_3(pioneer_minisplit),
         pioneer_minisplit_sensor_compressor_current(pioneer_minisplit),
-        pioneer_minisplit_sensor_motor_raw(pioneer_minisplit),
+        pioneer_minisplit_sensor_motor(pioneer_minisplit),
         pioneer_minisplit_sensor_swing_v_pos(pioneer_minisplit),
         pioneer_minisplit_sensor_swing_h_pos(pioneer_minisplit),
         pioneer_minisplit_sensor_fault(pioneer_minisplit),
@@ -103,7 +103,8 @@ sensor:
         state_class: measurement
         device_class: current
         accuracy_decimals: 1
-      - name: "Motor Raw"
+      - name: "Motor"
+        state_class: measurement
       - name: "Swing V Pos"
       - name: "Swing H Pos"
       - name: "Fault"
@@ -122,12 +123,3 @@ binary_sensor:
       };
     binary_sensors:
       - name: "Deep Sleep"
-
-text_sensor:
-  - platform: custom
-    lambda: |-
-      return {
-        pioneer_minisplit_sensor_motor(pioneer_minisplit)
-      };
-    text_sensors:
-      - name: "Motor Speed"
