@@ -11,7 +11,7 @@ CODEOWNERS = ["@ryan-lang"]
 
 CONF_CLIMATE = "climate"
 
-PioneerMinisplitClimate = pioneer_minisplit_ns.class_("PioneerMinisplitClimate", climate.Climate, cg.Component)
+PioneerMinisplitClimate = pioneer_minisplit_ns.class_("PioneerMinisplitClimate", cg.Component, climate.Climate)
 
 CONFIG_SCHEMA = cv.All(climate.CLIMATE_SCHEMA.extend({
     cv.GenerateID(CONF_OUTPUT_ID): cv.declare_id(PioneerMinisplitClimate),

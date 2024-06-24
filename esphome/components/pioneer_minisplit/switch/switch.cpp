@@ -1,4 +1,5 @@
 #include "switch.h"
+#include "esphome/core/log.h"
 
 namespace esphome
 {
@@ -11,7 +12,7 @@ namespace esphome
             // listen for device state changes
             this->parent_->register_listener([this](AcState *state)
                                              {
-                if (this->purpose_ == DISPLAY)
+                if (this->purpose_ == PioneerMinisplitSwitchPurpose::SWITCH_DISPLAY)
                 {
                     if (this->state != state->get(AcState::AC_DISPLAY))
                     {
@@ -19,7 +20,7 @@ namespace esphome
                     }
                 }
 
-                if (this->purpose_ == BEEP)
+                if (this->purpose_ == PioneerMinisplitSwitchPurpose::SWITCH_BEEP)
                 {
                     if (this->state != state->get(AcState::AC_BEEP))
                     {
@@ -31,18 +32,16 @@ namespace esphome
         // state change from esphome, send to device
         void PioneerMinisplitSwitch::write_state(bool state)
         {
-            ESP_LOGD("pioneer", "SWITCH WRITE STATE: %s, STATE: %d", switch_name.c_str(), state);
-
             // clone the state and start building a pending state
             this->parent_->prepare_state_pending();
 
-            if (this->purpose_ == DISPLAY)
+            if (this->purpose_ == PioneerMinisplitSwitchPurpose::SWITCH_DISPLAY)
             {
                 // TODO: block change if power is OFF
                 this->parent_->ac_state_pending->set(AcState::AC_DISPLAY, state);
             }
 
-            if (this->purpose_ == BEEP)
+            if (this->purpose_ == PioneerMinisplitSwitchPurpose::SWITCH_BEEP)
             {
                 this->parent_->ac_state_pending->set(AcState::AC_BEEP, state);
             }

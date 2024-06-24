@@ -12,8 +12,8 @@ namespace esphome
 
         enum PioneerMinisplitSwitchPurpose : uint8_t
         {
-            DISPLAY,
-            BEEP
+            SWITCH_DISPLAY,
+            SWITCH_BEEP
         };
 
         class PioneerMinisplitSwitch : public Component, public switch_::Switch

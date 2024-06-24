@@ -13,6 +13,7 @@ namespace esphome
         class PioneerMinisplitClimate : public Component, public climate::Climate
         {
         public:
+            PioneerMinisplitClimate(PioneerMinisplit *parent) : parent_(parent) {}
             void control(const climate::ClimateCall &call) override;
             climate::ClimateTraits traits() override;
 

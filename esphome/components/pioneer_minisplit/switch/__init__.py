@@ -25,10 +25,10 @@ CONFIG_SCHEMA = (
 async def to_code(config):
     parent = await cg.get_variable(config[CONF_PIONEER_MINISPLIT_ID])
     if config_display := config.get(CONF_DISPLAY):
-        var = await switch.new_switch(config_display, parent, PioneerMinisplitSwitchPurpose.DISPLAY)
+        var = await switch.new_switch(config_display, parent, PioneerMinisplitSwitchPurpose.SWITCH_DISPLAY)
         await cg.register_component(var, config_display)
 
     if config_beep := config.get(CONF_BEEP):
-        var = await switch.new_switch(config_beep, parent, PioneerMinisplitSwitchPurpose.BEEP)
+        var = await switch.new_switch(config_beep, parent, PioneerMinisplitSwitchPurpose.SWITCH_BEEP)
         await cg.register_component(var, config_beep)
     

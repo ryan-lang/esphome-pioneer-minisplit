@@ -72,8 +72,8 @@ namespace esphome
             if (this->rx_pos <= 1)
                 return;
 
-            char checksum = 0;
-            for (char i = 0; i < this->rx_pos - 1; i++)
+            uint8_t checksum = 0;
+            for (uint8_t i = 0; i < this->rx_pos - 1; i++)
             {
                 checksum ^= this->rx_line[i];
             }
@@ -98,13 +98,13 @@ namespace esphome
                 return;
 
             // LOG each received byte as hex
-            for (char i = 0; i < this->rx_pos; i++)
+            for (uint8_t i = 0; i < this->rx_pos; i++)
             {
                 ESP_LOGVV("pioneer", ">>>> %d: %02X (%d)", i, rx_line[i], rx_line[i]);
             }
 
             // compare the current rx_line to the last rx_line, logging any differences and updating as we go
-            for (char i = 0; i < this->rx_pos; i++)
+            for (uint8_t i = 0; i < this->rx_pos; i++)
             {
                 if (this->rx_line[i] != this->rx_line_last[i])
                 {
@@ -214,10 +214,10 @@ namespace esphome
         }
 
         // populate the AcCmd buffer with the current state
-        void populate_command_data_(AcState *state, uint8_t *AcCmd)
+        void PioneerMinisplit::populate_command_data_(AcState *state, uint8_t *AcCmd)
         {
-            const char modeMap[] = {3, 7, 2, 1, 8};
-            const char fanMap[] = {0, 2, 3, 5, 0};
+            const uint8_t modeMap[] = {3, 7, 2, 1, 8};
+            const uint8_t fanMap[] = {0, 2, 3, 5, 0};
 
             AcCmd[0] = 0xBB;
             AcCmd[1] = 0x00;
@@ -270,8 +270,8 @@ namespace esphome
 
         void PioneerMinisplit::calculate_and_set_checksum_(uint8_t *AcCmd)
         {
-            char checksum = 0;
-            for (char i = 0; i < this->COMMAND_LENGTH - 1; i++)
+            uint8_t checksum = 0;
+            for (uint8_t i = 0; i < this->COMMAND_LENGTH - 1; i++)
             {
                 checksum ^= AcCmd[i];
             }
