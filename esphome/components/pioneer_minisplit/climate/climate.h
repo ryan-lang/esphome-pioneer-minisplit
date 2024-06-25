@@ -14,11 +14,12 @@ namespace esphome
         {
         public:
             PioneerMinisplitClimate(PioneerMinisplit *parent) : parent_(parent) {}
-            void control(const climate::ClimateCall &call) override;
-            climate::ClimateTraits traits() override;
 
         protected:
             void setup() override;
+            void control(const climate::ClimateCall &call) override;
+            climate::ClimateTraits traits() override;
+
             climate::ClimateMode ac_mode_to_esphome_mode_(uint8_t ac_mode, bool ac_power);
             void esphome_mode_to_ac_mode_(climate::ClimateMode mode, uint8_t &ac_mode, bool &ac_power);
             climate::ClimateFanMode ac_fan_mode_to_esphome_fan_mode_(uint8_t ac_fan);

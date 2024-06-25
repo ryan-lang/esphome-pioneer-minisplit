@@ -5,11 +5,6 @@ namespace esphome
     namespace pioneer_minisplit
     {
 
-        void PioneerMinisplit::setup()
-        {
-            this->ac_state = new AcState();
-        }
-
         // main loop
         void PioneerMinisplit::loop()
         {

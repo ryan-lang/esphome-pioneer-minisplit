@@ -85,8 +85,7 @@ namespace esphome
         class PioneerMinisplit : public Component, public uart::UARTDevice
         {
         public:
-            //    PioneerMinisplit(UARTComponent *parent) : Component(), UARTDevice(parent), ac_state(new AcState()) void setup() override{};
-            void setup() override;
+            PioneerMinisplit() : Component(), UARTDevice(), ac_state(new AcState()){};
             void loop() override;
             void register_listener(const std::function<void(AcState *state)> &func);
             void prepare_state_pending();
