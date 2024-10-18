@@ -90,6 +90,7 @@ namespace esphome
             void register_listener(const std::function<void(AcState *state)> &func);
             void prepare_state_pending();
             std::unique_ptr<AcState> ac_state_pending;
+            AcState *ac_state;
 
         private:
             void read_serial_data_();
@@ -103,7 +104,6 @@ namespace esphome
 
             static const uint8_t TOTAL_COMMANDS = 13;
             static const uint8_t COMMAND_LENGTH = 31;
-            AcState *ac_state;
             std::vector<AcStateListener> listeners_;
             uint8_t rx_pos = 0;
             uint8_t rx_line[70];

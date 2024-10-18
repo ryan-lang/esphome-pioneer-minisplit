@@ -20,6 +20,14 @@ namespace esphome
             void control(const climate::ClimateCall &call) override;
             climate::ClimateTraits traits() override;
 
+            void switch_to_action_(climate::ClimateAction action);
+
+            climate::ClimateAction compute_action_();
+
+            /// Check if cooling/fanning/heating actions are required; returns true if so
+            bool cooling_required_();
+            bool heating_required_();
+
             climate::ClimateMode ac_mode_to_esphome_mode_(uint8_t ac_mode, bool ac_power);
             void esphome_mode_to_ac_mode_(climate::ClimateMode mode, uint8_t &ac_mode, bool &ac_power);
             climate::ClimateFanMode ac_fan_mode_to_esphome_fan_mode_(uint8_t ac_fan);
@@ -31,6 +39,14 @@ namespace esphome
             void esphome_preset_to_ac_preset_(climate::ClimatePreset preset, bool &ac_eco, bool &ac_turbo, bool &ac_sleep);
 
             PioneerMinisplit *parent_;
+
+            /// Hysteresis values used for computing climate actions
+            float cooling_deadband_{0};
+            float cooling_overrun_{0};
+            float heating_deadband_{0};
+            float heating_overrun_{0};
+
+            bool use_advanced_heat_cool_{true};
         };
     }
 }
