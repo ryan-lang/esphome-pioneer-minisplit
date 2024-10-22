@@ -21,6 +21,7 @@ CONF_FAULT = "fault"
 CONF_CLEAN_FILTER = "clean_filter"
 CONF_HEALTH = "health"
 CONF_SUPPLY_VOLTAGE = "supply_voltage"
+CONF_INTERNAL_SET_TEMP = "internal_set_temp"
 
 PioneerMinisplitSensor = pioneer_minisplit_ns.class_("PioneerMinisplitSensor", sensor.Sensor, cg.Component)
 PioneerMinisplitSensorPurpose = pioneer_minisplit_ns.enum("PioneerMinisplitSensorPurpose")
@@ -42,6 +43,7 @@ CONFIG_SCHEMA = (
         cv.Optional(CONF_CLEAN_FILTER): sensor.sensor_schema(PioneerMinisplitSensor, icon="mdi:air-filter").extend(cv.COMPONENT_SCHEMA),
         cv.Optional(CONF_HEALTH): sensor.sensor_schema(PioneerMinisplitSensor, icon="mdi:medical-bag").extend(cv.COMPONENT_SCHEMA),
         cv.Optional(CONF_SUPPLY_VOLTAGE): sensor.sensor_schema(PioneerMinisplitSensor, state_class="measurement", device_class="voltage", unit_of_measurement="V").extend(cv.COMPONENT_SCHEMA),
+        cv.Optional(CONF_INTERNAL_SET_TEMP): sensor.sensor_schema(PioneerMinisplitSensor, icon="mdi:thermometer", state_class="measurement", unit_of_measurement="°C").extend(cv.COMPONENT_SCHEMA),
     })
 )
 
@@ -103,4 +105,8 @@ async def to_code(config):
     if config_supply_voltage := config.get(CONF_SUPPLY_VOLTAGE):
         var = await sensor.new_sensor(config_supply_voltage, parent, PioneerMinisplitSensorPurpose.SUPPLY_VOLTAGE)
         await cg.register_component(var, config_supply_voltage)
+
+    if config_internal_set_temp := config.get(CONF_INTERNAL_SET_TEMP):
+        var = await sensor.new_sensor(config_internal_set_temp, parent, PioneerMinisplitSensorPurpose.INTERNAL_SET_TEMP)
+        await cg.register_component(var, config_internal_set_temp)
     

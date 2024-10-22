@@ -133,6 +133,15 @@ namespace esphome
                     {
                         this->publish_state(state->get(AcState::AC_SWING_H_POS));
                     }
+                }
+
+                // Tracking INTERNAL SET TEMP
+                if (this->purpose_ == INTERNAL_SET_TEMP)
+                {
+                    if (this->get_state() != state->get(AcState::AC_STMP))
+                    {
+                        this->publish_state(state->get(AcState::AC_STMP));
+                    }
                 } });
         }
     }

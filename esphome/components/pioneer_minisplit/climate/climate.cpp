@@ -15,53 +15,34 @@ namespace esphome
 
                                                 // sync MODE
                                                 climate::ClimateMode new_mode = ac_mode_to_esphome_mode_(state->get(AcState::AC_MODE), state->get(AcState::AC_POWER));
-                                                if (this->mode != new_mode){
-                                                    if (this->use_advanced_heat_cool_)
+                                                this->mode_internal_ = new_mode;
+                                                if (this->use_advanced_heat_cool_){
+                                                    // in advanced mode, we only support modes:
+                                                    // - CLIMATE_MODE_OFF
+                                                    // - CLIMATE_MODE_FAN_ONLY
+                                                    // - CLIMATE_MODE_DRY
+                                                    // - CLIMATE_MODE_HEAT_COOL
+                                                    // CLIMATE_MODE_HEAT_COOL is overloaded to also mean CLIMATE_MODE_COOL & CLIMATE_MODE_HEAT
+
+                                                    if (new_mode == climate::CLIMATE_MODE_COOL || new_mode == climate::CLIMATE_MODE_HEAT || new_mode == climate::CLIMATE_MODE_OFF)
                                                     {
-                                                        // if we are use_advanced_heat_cool_ and in CLIMATE_MODE_HEAT_COOL mode,
-                                                        // mode changes will be transparent because we will be switching modes
-                                                        // based on the current temperature
-
-                                                        ESP_LOGD("climate", "Ignoring mode change to %d", new_mode);
-
-                                                    }else{
-                                                    
-                                                        this->mode = new_mode;
-                                                        climate_changed = true;
+                                                        new_mode = climate::CLIMATE_MODE_HEAT_COOL;
                                                     }
+                                                }
+                                                if (this->mode != new_mode){
+                                                    this->mode = new_mode;
+                                                    climate_changed = true;
                                                 }
                                                 
                                                 // STMP change
-                                                if (this->use_advanced_heat_cool_  && this->mode == climate::CLIMATE_MODE_HEAT_COOL)
+                                                if (!std::isnan(state->get(AcState::AC_STMP)))
                                                 {
-                                                    // if we are use_advanced_heat_cool_ in CLIMATE_MODE_HEAT_COOL, device's target temp
-                                                    // is ignored, because we are tracking a different set of temps internally
+                                                    this->stmp_internal_ = state->get(AcState::AC_STMP);
 
-                                                    ESP_LOGD("climate", "Ignoring target temperature change to %f", state->get_float(AcState::AC_STMP));
-                                                
-                                                }else if (this->use_advanced_heat_cool_){
-                                                    
-                                                    // if we are use_advanced_heat_cool_ and not in CLIMATE_MODE_HEAT_COOL,
-                                                    // target temp goes into both high and low slots
-
-                                                    if (!std::isnan(state->get(AcState::AC_STMP)) 
-                                                    && (
-                                                        (std::abs(this->target_temperature_high - state->get(AcState::AC_STMP)) > 0.01f || std::isnan(this->target_temperature_high)) ||
-                                                        (std::abs(this->target_temperature_low - state->get(AcState::AC_STMP)) > 0.01f || std::isnan(this->target_temperature_low))
-                                                    ))   
-                                                    {
-                                                        this->target_temperature_high = state->get(AcState::AC_STMP);
-                                                        this->target_temperature_low = state->get(AcState::AC_STMP);
-                                                        ESP_LOGD("climate", "Setting target temperature high/low to %f", this->target_temperature_high);
-                                                        climate_changed = true;
-                                                    }
-
-                                                }else{
-                                                    // otherwise target temp goes into single point target temp
-                                                    if (!std::isnan(state->get(AcState::AC_STMP)) && (std::abs(this->target_temperature - state->get(AcState::AC_STMP)) > 0.01f || std::isnan(this->target_temperature)))
-                                                    {
+                                                    if (!this->use_advanced_heat_cool_ && this->target_temperature != state->get(AcState::AC_STMP)){
+                                                        // otherwise target temp goes into single point target temp
                                                         this->target_temperature = state->get(AcState::AC_STMP);
-                                                        ESP_LOGD("climate", "Setting target temperature to %f", this->target_temperature);
+                                                        ESP_LOGD("climate", "Setting target temperature to %d", this->target_temperature);
                                                         climate_changed = true;
                                                     }
                                                 }
@@ -105,7 +86,9 @@ namespace esphome
                                                     this->current_temperature = state->get_float(AcState::AC_CUR_TEMP);
 
                                                     // required action may have changed, recompute, refresh, we'll publish_state() later
-                                                    this->switch_to_action_(this->compute_action_());
+                                                    if (this->use_advanced_heat_cool_ && this->mode == climate::CLIMATE_MODE_HEAT_COOL){
+                                                        this->switch_to_action_(this->compute_action_());
+                                                    }
                                                  
                                                     climate_changed = true;
                                                  }
@@ -121,7 +104,15 @@ namespace esphome
             {
                 restore->to_call(this).perform();
             }
-            this->switch_to_action_(this->compute_action_());
+            else
+            {
+                ESP_LOGD("climate", "No previous state to restore");
+            }
+
+            if (this->use_advanced_heat_cool_ && this->mode == climate::CLIMATE_MODE_HEAT_COOL)
+            {
+                this->switch_to_action_(this->compute_action_());
+            }
             this->publish_state();
         }
 
@@ -162,41 +153,26 @@ namespace esphome
                 this->parent_->ac_state_pending->set(AcState::AC_SLEEP, new_ac_sleep);
             }
 
-            // TARG TEMP change
-            if (call.get_target_temperature().has_value())
-            {
-                this->parent_->ac_state_pending->set(AcState::AC_STMP, *call.get_target_temperature());
-            }
-
-            // set TARGET TEMP high/low
+            // set TARGET TEMP change
             if (this->use_advanced_heat_cool_)
             {
-                if (this->mode == climate::CLIMATE_MODE_HEAT_COOL)
+                if (call.get_target_temperature_low().has_value())
                 {
-                    if (call.get_target_temperature_low().has_value())
-                    {
-                        this->target_temperature_low = *call.get_target_temperature_low();
-                        state_changed = true;
-                    }
-
-                    if (call.get_target_temperature_high().has_value())
-                    {
-                        this->target_temperature_high = *call.get_target_temperature_high();
-                        state_changed = true;
-                    }
+                    this->target_temperature_low = *call.get_target_temperature_low();
+                    state_changed = true;
                 }
-                else
-                {
-                    // if we are not in CLIMATE_MODE_HEAT_COOL, use whatever is most recently set as the target temp
-                    if (call.get_target_temperature_low().has_value())
-                    {
-                        this->parent_->ac_state_pending->set(AcState::AC_STMP, *call.get_target_temperature_low());
-                    }
 
-                    if (call.get_target_temperature_high().has_value())
-                    {
-                        this->parent_->ac_state_pending->set(AcState::AC_STMP, *call.get_target_temperature_high());
-                    }
+                if (call.get_target_temperature_high().has_value())
+                {
+                    this->target_temperature_high = *call.get_target_temperature_high();
+                    state_changed = true;
+                }
+            }
+            else
+            {
+                if (call.get_target_temperature().has_value())
+                {
+                    this->parent_->ac_state_pending->set(AcState::AC_STMP, *call.get_target_temperature());
                 }
             }
 
@@ -220,6 +196,10 @@ namespace esphome
 
             if (state_changed)
             {
+                if (this->use_advanced_heat_cool_ && this->mode == climate::CLIMATE_MODE_HEAT_COOL)
+                {
+                    this->switch_to_action_(this->compute_action_());
+                }
                 this->publish_state();
             }
         }
@@ -242,48 +222,68 @@ namespace esphome
 
         void PioneerMinisplitClimate::switch_to_action_(climate::ClimateAction action)
         {
+            if (action != climate::CLIMATE_ACTION_IDLE && action != climate::CLIMATE_ACTION_COOLING && action != climate::CLIMATE_ACTION_HEATING)
+            {
+                ESP_LOGD("climate", "Invalid action in switch_to_action_ %d", action);
+                return;
+            }
 
-            // clone the state and start building a pending state
-            this->parent_->prepare_state_pending();
-
-            // ACTION change
+            // determine new desired state
+            climate::ClimateMode desired_mode;
+            uint8_t desired_stmp;
             if (action == climate::CLIMATE_ACTION_COOLING)
             {
-                // TURN ON & COOL to target_temperature_high
-                ESP_LOGD("climate", "Switching to COOLING");
-
-                uint8_t new_ac_mode;
-                bool new_ac_power;
-                esphome_mode_to_ac_mode_(climate::CLIMATE_MODE_COOL, new_ac_mode, new_ac_power);
-                this->parent_->ac_state_pending->set(AcState::AC_MODE, new_ac_mode);
-                this->parent_->ac_state_pending->set(AcState::AC_POWER, new_ac_power);
-                this->parent_->ac_state_pending->set(AcState::AC_STMP, this->target_temperature_high);
+                desired_mode = climate::CLIMATE_MODE_COOL;
+                desired_stmp = this->target_temperature_high;
             }
             else if (action == climate::CLIMATE_ACTION_HEATING)
             {
-                // TURN ON & HEAT to target_temperature_low
-                ESP_LOGD("climate", "Switching to HEATING");
-                uint8_t new_ac_mode;
-                bool new_ac_power;
-                esphome_mode_to_ac_mode_(climate::CLIMATE_MODE_HEAT, new_ac_mode, new_ac_power);
-                this->parent_->ac_state_pending->set(AcState::AC_MODE, new_ac_mode);
-                this->parent_->ac_state_pending->set(AcState::AC_POWER, new_ac_power);
-                this->parent_->ac_state_pending->set(AcState::AC_STMP, this->target_temperature_low);
+                desired_mode = climate::CLIMATE_MODE_HEAT;
+                desired_stmp = this->target_temperature_low;
             }
-            else if (action == climate::CLIMATE_ACTION_IDLE)
+            else
             {
-                // TURN OFF
-                ESP_LOGD("climate", "Switching to IDLE");
+                desired_mode = climate::CLIMATE_MODE_OFF;
+                desired_stmp = 0;
+            }
+
+            // determine if changes are occuring and we need to send a device command
+            bool is_state_changing = false;
+            if (this->mode_internal_ != desired_mode)
+            {
+                ESP_LOGI("climate", "adv. heat/cool - switching to mode %s from cur. internal mode %s", climate::climate_mode_to_string(desired_mode), climate::climate_mode_to_string(this->mode_internal_));
+                // clone the state and start building a pending state
+                if (!this->parent_->ac_state_pending)
+                {
+                    this->parent_->prepare_state_pending();
+                }
+
                 uint8_t new_ac_mode;
                 bool new_ac_power;
-                esphome_mode_to_ac_mode_(climate::CLIMATE_MODE_OFF, new_ac_mode, new_ac_power);
+                esphome_mode_to_ac_mode_(desired_mode, new_ac_mode, new_ac_power);
                 this->parent_->ac_state_pending->set(AcState::AC_MODE, new_ac_mode);
                 this->parent_->ac_state_pending->set(AcState::AC_POWER, new_ac_power);
+            }
+            if (this->stmp_internal_ != desired_stmp && !std::isnan(desired_stmp) && desired_stmp > 0)
+            {
+                ESP_LOGI("climate", "adv. heat/cool - setting temp to %f from cur. internal temp %f", desired_stmp, this->stmp_internal_);
+                // clone the state and start building a pending state
+                if (!this->parent_->ac_state_pending)
+                {
+                    this->parent_->prepare_state_pending();
+                }
+                this->parent_->ac_state_pending->set(AcState::AC_STMP, desired_stmp);
             }
         }
 
         bool PioneerMinisplitClimate::cooling_required_()
         {
+            // if mode is not HEAT_COOL, we don't act
+            if (this->mode != climate::CLIMATE_MODE_HEAT_COOL)
+            {
+                return false;
+            }
+
             auto temperature = this->target_temperature_high;
 
             if (this->current_temperature > temperature + this->cooling_deadband_)
@@ -299,14 +299,19 @@ namespace esphome
             else
             {
                 // if we get here, the current temperature is between target + deadband and target - overrun,
-                //  so the action should not change unless it conflicts with the current mode
-                return (this->action == climate::CLIMATE_ACTION_COOLING) &&
-                       ((this->mode == climate::CLIMATE_MODE_HEAT_COOL) || (this->mode == climate::CLIMATE_MODE_COOL));
+                //  so the action should continue whatever it was already doing
+                return this->action == climate::CLIMATE_ACTION_COOLING;
             }
         }
 
         bool PioneerMinisplitClimate::heating_required_()
         {
+            // if mode is not HEAT_COOL, we don't act
+            if (this->mode != climate::CLIMATE_MODE_HEAT_COOL)
+            {
+                return false;
+            }
+
             auto temperature = this->target_temperature_low;
 
             if (this->current_temperature < temperature - this->heating_deadband_)
@@ -322,9 +327,8 @@ namespace esphome
             else
             {
                 // if we get here, the current temperature is between target - deadband and target + overrun,
-                //  so the action should not change unless it conflicts with the current mode
-                return (this->action == climate::CLIMATE_ACTION_HEATING) &&
-                       ((this->mode == climate::CLIMATE_MODE_HEAT_COOL) || (this->mode == climate::CLIMATE_MODE_HEAT));
+                //  so the action should continue whatever it was already doing
+                return this->action == climate::CLIMATE_ACTION_HEATING;
             }
         }
 
@@ -334,13 +338,6 @@ namespace esphome
             auto traits = climate::ClimateTraits();
             traits.set_supports_current_temperature(true);
             traits.set_supports_action(true);
-            traits.set_supported_modes({climate::CLIMATE_MODE_OFF,
-                                        climate::CLIMATE_MODE_COOL,
-                                        climate::CLIMATE_MODE_FAN_ONLY,
-                                        climate::CLIMATE_MODE_DRY,
-                                        climate::CLIMATE_MODE_HEAT,
-                                        climate::CLIMATE_MODE_HEAT_COOL,
-                                        climate::CLIMATE_MODE_AUTO});
             traits.set_supported_fan_modes({climate::CLIMATE_FAN_AUTO,
                                             climate::CLIMATE_FAN_LOW,
                                             climate::CLIMATE_FAN_MEDIUM,
@@ -359,6 +356,18 @@ namespace esphome
             if (this->use_advanced_heat_cool_)
             {
                 traits.set_supports_two_point_target_temperature(true);
+                traits.set_supported_modes({climate::CLIMATE_MODE_FAN_ONLY,
+                                            climate::CLIMATE_MODE_DRY,
+                                            climate::CLIMATE_MODE_HEAT_COOL});
+            }
+            else
+            {
+                traits.set_supported_modes({climate::CLIMATE_MODE_OFF,
+                                            climate::CLIMATE_MODE_COOL,
+                                            climate::CLIMATE_MODE_FAN_ONLY,
+                                            climate::CLIMATE_MODE_DRY,
+                                            climate::CLIMATE_MODE_HEAT,
+                                            climate::CLIMATE_MODE_HEAT_COOL});
             }
 
             return traits;

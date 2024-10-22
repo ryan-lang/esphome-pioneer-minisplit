@@ -95,7 +95,7 @@ namespace esphome
             // LOG each received byte as hex
             for (uint8_t i = 0; i < this->rx_pos; i++)
             {
-                ESP_LOGVV("pioneer", ">>>> %d: %02X (%d)", i, rx_line[i], rx_line[i]);
+                ESP_LOGVV("pioneer", "<<< %d: %02X (%d)", i, rx_line[i], rx_line[i]);
             }
 
             // compare the current rx_line to the last rx_line, logging any differences and updating as we go

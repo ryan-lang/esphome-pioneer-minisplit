@@ -25,7 +25,8 @@ namespace esphome
             FAULT,
             CLEAN_FILTER,
             HEALTH,
-            SUPPLY_VOLTAGE
+            SUPPLY_VOLTAGE,
+            INTERNAL_SET_TEMP // for advanced mode when this is not the target temp
         };
 
         class PioneerMinisplitSensor : public Component, public sensor::Sensor

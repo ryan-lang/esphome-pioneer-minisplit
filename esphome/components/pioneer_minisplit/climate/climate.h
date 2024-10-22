@@ -47,6 +47,8 @@ namespace esphome
             float heating_overrun_{0};
 
             bool use_advanced_heat_cool_{true};
+            climate::ClimateMode mode_internal_;
+            uint8_t stmp_internal_;
         };
     }
 }
