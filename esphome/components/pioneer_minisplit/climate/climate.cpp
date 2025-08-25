@@ -121,8 +121,6 @@ namespace esphome
         // does not explicitly send the command to the device, but preps for delayed send
         void PioneerMinisplitClimate::control(const climate::ClimateCall &call)
         {
-            // clone the state and start building a pending state
-            this->parent_->prepare_state_pending();
             bool state_changed = false;
 
             // MODE change
@@ -132,8 +130,8 @@ namespace esphome
                 bool new_ac_power;
                 esphome_mode_to_ac_mode_(*call.get_mode(), new_ac_mode, new_ac_power);
 
-                this->parent_->ac_state_pending->set(AcState::AC_MODE, new_ac_mode);
-                this->parent_->ac_state_pending->set(AcState::AC_POWER, new_ac_power);
+                this->parent_->set_pending_parameter(AcState::AC_MODE, new_ac_mode);
+                this->parent_->set_pending_parameter(AcState::AC_POWER, new_ac_power);
 
                 // set mode optimistically
                 this->mode = *call.get_mode();
@@ -148,9 +146,9 @@ namespace esphome
                 bool new_ac_sleep;
                 esphome_preset_to_ac_preset_(*call.get_preset(), new_ac_eco, new_ac_turbo, new_ac_sleep);
 
-                this->parent_->ac_state_pending->set(AcState::AC_ECO, new_ac_eco);
-                this->parent_->ac_state_pending->set(AcState::AC_TURBO, new_ac_turbo);
-                this->parent_->ac_state_pending->set(AcState::AC_SLEEP, new_ac_sleep);
+                this->parent_->set_pending_parameter(AcState::AC_ECO, new_ac_eco);
+                this->parent_->set_pending_parameter(AcState::AC_TURBO, new_ac_turbo);
+                this->parent_->set_pending_parameter(AcState::AC_SLEEP, new_ac_sleep);
             }
 
             // set TARGET TEMP change
@@ -172,7 +170,7 @@ namespace esphome
             {
                 if (call.get_target_temperature().has_value())
                 {
-                    this->parent_->ac_state_pending->set(AcState::AC_STMP, *call.get_target_temperature());
+                    this->parent_->set_pending_parameter(AcState::AC_STMP, *call.get_target_temperature());
                 }
             }
 
@@ -180,7 +178,7 @@ namespace esphome
             if (call.get_fan_mode().has_value())
             {
                 uint8_t new_ac_fan = esphome_fan_mode_to_ac_fan_mode_(*call.get_fan_mode());
-                this->parent_->ac_state_pending->set(AcState::AC_FAN, new_ac_fan);
+                this->parent_->set_pending_parameter(AcState::AC_FAN, new_ac_fan);
             }
 
             // SWING change
@@ -190,8 +188,8 @@ namespace esphome
                 u_int8_t new_swing_v;
                 esphome_swing_mode_to_ac_swing_mode_(*call.get_swing_mode(), new_swing_h, new_swing_v);
 
-                this->parent_->ac_state_pending->set(AcState::AC_SWING_H, new_swing_h);
-                this->parent_->ac_state_pending->set(AcState::AC_SWING_V, new_swing_v);
+                this->parent_->set_pending_parameter(AcState::AC_SWING_H, new_swing_h);
+                this->parent_->set_pending_parameter(AcState::AC_SWING_V, new_swing_v);
             }
 
             if (state_changed)
@@ -253,26 +251,20 @@ namespace esphome
             {
                 ESP_LOGI("climate", "adv. heat/cool - switching to mode %s from cur. internal mode %s", climate::climate_mode_to_string(desired_mode), climate::climate_mode_to_string(this->mode_internal_));
                 // clone the state and start building a pending state
-                if (!this->parent_->ac_state_pending)
-                {
-                    this->parent_->prepare_state_pending();
-                }
+                // No need to prepare state anymore - just set pending parameters
 
                 uint8_t new_ac_mode;
                 bool new_ac_power;
                 esphome_mode_to_ac_mode_(desired_mode, new_ac_mode, new_ac_power);
-                this->parent_->ac_state_pending->set(AcState::AC_MODE, new_ac_mode);
-                this->parent_->ac_state_pending->set(AcState::AC_POWER, new_ac_power);
+                this->parent_->set_pending_parameter(AcState::AC_MODE, new_ac_mode);
+                this->parent_->set_pending_parameter(AcState::AC_POWER, new_ac_power);
             }
             if (this->stmp_internal_ != desired_stmp && !std::isnan(desired_stmp) && desired_stmp > 0)
             {
                 ESP_LOGI("climate", "adv. heat/cool - setting temp to %f from cur. internal temp %f", desired_stmp, this->stmp_internal_);
                 // clone the state and start building a pending state
-                if (!this->parent_->ac_state_pending)
-                {
-                    this->parent_->prepare_state_pending();
-                }
-                this->parent_->ac_state_pending->set(AcState::AC_STMP, desired_stmp);
+                // No need to prepare state anymore - just set pending parameters
+                this->parent_->set_pending_parameter(AcState::AC_STMP, desired_stmp);
             }
         }
 

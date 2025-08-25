@@ -25,11 +25,73 @@ namespace esphome
             this->listeners_.push_back(listener);
         }
 
-        // takes whatever the state is at this moment in time, and clones it into
-        // the ac_state_pending object, which will eventually be sent to the device
-        void PioneerMinisplit::prepare_state_pending()
+        // Add a parameter change to the pending list
+        void PioneerMinisplit::set_pending_parameter(AcState::ParameterType param, uint8_t value)
         {
-            this->ac_state_pending = this->ac_state->clone();
+            // Check if this parameter is already in the pending list
+            for (uint8_t i = 0; i < pending_change_count; i++) {
+                if (pending_params[i] == param) {
+                    pending_values[i] = value;
+                    return;
+                }
+            }
+            
+            // Add new pending change if there's room
+            if (pending_change_count < MAX_PENDING_CHANGES) {
+                pending_params[pending_change_count] = param;
+                pending_values[pending_change_count] = value;
+                pending_change_count++;
+            }
+        }
+        
+        // Add a float parameter change to the pending list
+        void PioneerMinisplit::set_pending_parameter_float(AcState::ParameterType param, float value)
+        {
+            // Check if this parameter is already in the pending list
+            for (uint8_t i = 0; i < pending_change_count; i++) {
+                if (pending_params[i] == param) {
+                    pending_float_values[i] = value;
+                    return;
+                }
+            }
+            
+            // Add new pending change if there's room
+            if (pending_change_count < MAX_PENDING_CHANGES) {
+                pending_params[pending_change_count] = param;
+                pending_float_values[pending_change_count] = value;
+                pending_change_count++;
+            }
+        }
+        
+        // Clear all pending changes
+        void PioneerMinisplit::clear_pending_changes()
+        {
+            pending_change_count = 0;
+        }
+        
+        // Get the pending state (builds it from current state + pending changes)
+        AcState* PioneerMinisplit::get_pending_state()
+        {
+            if (pending_change_count == 0) {
+                return nullptr;
+            }
+            
+            // Copy current state to buffer
+            pending_state_buffer.copy_from(ac_state);
+            
+            // Apply pending changes
+            for (uint8_t i = 0; i < pending_change_count; i++) {
+                AcState::ParameterType param = static_cast<AcState::ParameterType>(pending_params[i]);
+                if (param == AcState::AC_STMP || param == AcState::AC_CUR_TEMP || 
+                    param == AcState::AC_TEMP_PIPE_OUT || param == AcState::AC_TEMP_PIPE_IN ||
+                    param == AcState::AC_COMPRESSOR_CURRENT || param == AcState::AC_SUPPLY_VOLTAGE) {
+                    pending_state_buffer.set_float(param, pending_float_values[i]);
+                } else {
+                    pending_state_buffer.set(param, pending_values[i]);
+                }
+            }
+            
+            return &pending_state_buffer;
         }
 
         // read serial data into rx_line buffer
@@ -184,15 +246,15 @@ namespace esphome
         // send the pending state to the device
         void PioneerMinisplit::send_pending_state_()
         {
-            if (!this->has_state_ack || !this->ac_state_pending)
+            if (!this->has_state_ack || !this->has_pending_changes())
                 return;
 
             // prevents sending a 2nd command while waiting for response from first
             // also don't send a command before we've received the first state response
             this->has_state_ack = 0;
 
-            // copy and reset the pending state; ac_state_pending will now be null
-            AcState *state_pending = this->ac_state_pending.release();
+            // Get the pending state (combines current state with pending changes)
+            AcState *state_pending = this->get_pending_state();
 
             // special handling for BEEP, which is not tracked in device state payload
             if (state_pending->get(AcState::AC_BEEP) != this->ac_state->get(AcState::AC_BEEP))
@@ -206,6 +268,9 @@ namespace esphome
 
             this->write_array(AcCmd, this->COMMAND_LENGTH);
             this->hbeat = millis();
+            
+            // Clear pending changes after sending
+            this->clear_pending_changes();
         }
 
         // populate the AcCmd buffer with the current state

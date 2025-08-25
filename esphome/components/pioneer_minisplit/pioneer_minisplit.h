@@ -84,12 +84,13 @@ namespace esphome
                 return 0.0f;
             }
 
-            std::unique_ptr<AcState> clone()
+            // Copy values from another state
+            void copy_from(const AcState* other)
             {
-                return std::make_unique<AcState>(*this);
+                std::memcpy(this->state, other->state, sizeof(this->state));
+                std::memcpy(this->state_float, other->state_float, sizeof(this->state_float));
             }
 
-        private:
             uint8_t state[AC_PARAM_COUNT];
             float state_float[AC_PARAM_COUNT];
         };
@@ -105,8 +106,11 @@ namespace esphome
             PioneerMinisplit() : Component(), UARTDevice(), ac_state(new AcState()){};
             void loop() override;
             void register_listener(const std::function<void(AcState *state)> &func);
-            void prepare_state_pending();
-            std::unique_ptr<AcState> ac_state_pending;
+            void set_pending_parameter(AcState::ParameterType param, uint8_t value);
+            void set_pending_parameter_float(AcState::ParameterType param, float value);
+            void clear_pending_changes();
+            bool has_pending_changes() const { return pending_change_count > 0; }
+            AcState *get_pending_state();
             AcState *ac_state;
 
         private:
@@ -128,6 +132,14 @@ namespace esphome
             unsigned long minidelay = 0;
             unsigned long hbeat = 0;
             bool has_state_ack = true;
+            
+            // Pending state management - only track changed parameters
+            static const uint8_t MAX_PENDING_CHANGES = 16;
+            uint8_t pending_params[MAX_PENDING_CHANGES];
+            uint8_t pending_values[MAX_PENDING_CHANGES];
+            float pending_float_values[MAX_PENDING_CHANGES];
+            uint8_t pending_change_count = 0;
+            AcState pending_state_buffer;  // Reusable buffer for pending state
         };
 
     }

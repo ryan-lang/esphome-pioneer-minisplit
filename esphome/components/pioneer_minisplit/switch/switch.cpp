@@ -33,17 +33,17 @@ namespace esphome
         void PioneerMinisplitSwitch::write_state(bool state)
         {
             // clone the state and start building a pending state
-            this->parent_->prepare_state_pending();
+            // Set pending parameters directly without cloning
 
             if (this->purpose_ == PioneerMinisplitSwitchPurpose::SWITCH_DISPLAY)
             {
                 // TODO: block change if power is OFF
-                this->parent_->ac_state_pending->set(AcState::AC_DISPLAY, state);
+                this->parent_->set_pending_parameter(AcState::AC_DISPLAY, state);
             }
 
             if (this->purpose_ == PioneerMinisplitSwitchPurpose::SWITCH_BEEP)
             {
-                this->parent_->ac_state_pending->set(AcState::AC_BEEP, state);
+                this->parent_->set_pending_parameter(AcState::AC_BEEP, state);
             }
         }
     }
