@@ -2,9 +2,9 @@
 
 #include "esphome/core/component.h"
 #include "esphome/components/uart/uart.h"
-#include <map>
 #include <vector>
 #include <memory>
+#include <cstring>
 
 namespace esphome
 {
@@ -44,27 +44,44 @@ namespace esphome
                 AC_SWING_V_POS,
                 AC_SWING_H_POS,
                 AC_MOTOR,
-                AC_SUPPLY_VOLTAGE
+                AC_SUPPLY_VOLTAGE,
+                AC_PARAM_COUNT  // Keep this last - used for array sizing
             };
+
+            AcState() {
+                // Initialize arrays with default values
+                std::memset(state, 0, sizeof(state));
+                std::memset(state_float, 0, sizeof(state_float));
+            }
 
             void set(ParameterType command, uint8_t value)
             {
-                this->state[command] = value;
+                if (command < AC_PARAM_COUNT) {
+                    this->state[command] = value;
+                }
             }
 
             void set_float(ParameterType command, float value)
             {
-                this->state_float[command] = value;
+                if (command < AC_PARAM_COUNT) {
+                    this->state_float[command] = value;
+                }
             }
 
             uint8_t get(ParameterType command)
             {
-                return this->state[command];
+                if (command < AC_PARAM_COUNT) {
+                    return this->state[command];
+                }
+                return 0;
             }
 
             float get_float(ParameterType command)
             {
-                return this->state_float[command];
+                if (command < AC_PARAM_COUNT) {
+                    return this->state_float[command];
+                }
+                return 0.0f;
             }
 
             std::unique_ptr<AcState> clone()
@@ -73,8 +90,8 @@ namespace esphome
             }
 
         private:
-            std::map<ParameterType, uint8_t> state;
-            std::map<ParameterType, float> state_float;
+            uint8_t state[AC_PARAM_COUNT];
+            float state_float[AC_PARAM_COUNT];
         };
 
         struct AcStateListener
