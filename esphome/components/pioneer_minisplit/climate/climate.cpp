@@ -340,11 +340,14 @@ namespace esphome
             int delta = clamp((int)lroundf(error * this->throttle_gain_), 1, (int)this->max_throttle_);
             this->throttle_ = (uint8_t)delta;
 
-            // Derive the setpoint from the smoothed reading, not the raw one. The raw value
-            // steps 0.8C at a time between discrete levels; chasing that is what produced a
-            // command every couple of minutes for no change in actual demand.
-            float reference = std::isnan(this->internal_temp_avg_) ? this->internal_temp_ : this->internal_temp_avg_;
-            float setpoint = cooling ? (reference - delta) : (reference + delta);
+            // Track the raw reading, deliberately, despite it stepping 0.8C between discrete
+            // levels. Following it is what holds the commanded error at delta, and that is the
+            // whole point: smoothing it instead unpins capacity, measured on hardware as 1.78C
+            // of commanded error and 6.2A where tracking gives 1.0C and 2A. The resulting
+            // setpoint commands are not churn to be eliminated - they are the controller
+            // re-pinning capacity against a noisy sensor. internal_temp_avg_ is still computed,
+            // for the diagnostic sensor only.
+            float setpoint = cooling ? (this->internal_temp_ - delta) : (this->internal_temp_ + delta);
 
             if (this->committed_stmp_ != 0)
             {
@@ -356,12 +359,12 @@ namespace esphome
                     return this->committed_stmp_;
                 }
 
-                // The setpoint we send is an integer, so a value sitting near a rounding
-                // boundary would otherwise flip it back and forth forever. 1.0C rather than the
-                // 0.75 first tried here: the smoothed reference can still swing ~0.7C when the
-                // raw sensor parks on one of its discrete levels for many minutes, and 0.75 was
-                // narrow enough for that to punch through and keep the toggle alive.
-                if (std::fabs(setpoint - (float)this->committed_stmp_) < 1.0f)
+                // Enough of a band to stop a value sitting exactly on the rounding boundary from
+                // flipping the integer setpoint on every recompute, but deliberately narrower
+                // than the sensor's 0.8C level gap so that real movement is still followed.
+                // A wider band suppresses the commands, which sounds like an improvement and is
+                // not: it stops the controller re-pinning capacity. See the note above.
+                if (std::fabs(setpoint - (float)this->committed_stmp_) < 0.75f)
                 {
                     return this->committed_stmp_;
                 }
@@ -440,9 +443,20 @@ namespace esphome
 
             // determine if changes are occuring and we need to send a device command
             bool is_state_changing = false;
-            if (this->mode_internal_ != desired_mode)
+            // mode_internal_ reflects what the unit has acknowledged, which lags the command by
+            // some hundreds of milliseconds. Two calls arriving inside that gap - easy now that
+            // both a 30s timer and the remote sensor callback can trigger one - would each
+            // queue the same command. Suppress a repeat of the same mode briefly, but still
+            // allow a genuine retry if the unit never took it.
+            bool mode_recently_sent = this->last_mode_command_ms_ != 0 &&
+                                      this->last_mode_sent_ == desired_mode &&
+                                      (millis() - this->last_mode_command_ms_) < 10000;
+
+            if (this->mode_internal_ != desired_mode && !mode_recently_sent)
             {
                 ESP_LOGI("climate", "adv. heat/cool - switching to mode %s from cur. internal mode %s", climate::climate_mode_to_string(desired_mode), climate::climate_mode_to_string(this->mode_internal_));
+                this->last_mode_sent_ = desired_mode;
+                this->last_mode_command_ms_ = millis();
                 // clone the state and start building a pending state
                 // No need to prepare state anymore - just set pending parameters
 
@@ -459,7 +473,10 @@ namespace esphome
                 // command rate a bedroom would flash all night. A mode change is the actual
                 // on/off decision and is never held back.
                 uint32_t now = millis();
-                bool mode_changing = this->mode_internal_ != desired_mode;
+                // Only bypass the rate limit for a mode change we are actually issuing now. On a
+                // duplicate call the mode command is suppressed above, so the setpoint must fall
+                // back to the rate limit rather than riding a bypass that no longer applies.
+                bool mode_changing = this->mode_internal_ != desired_mode && !mode_recently_sent;
                 if (mode_changing || this->last_stmp_command_ms_ == 0 || (now - this->last_stmp_command_ms_) >= this->min_command_interval_)
                 {
                     ESP_LOGI("climate", "adv. heat/cool - setting temp to %u from cur. internal temp %u (throttle %u)", desired_stmp, this->stmp_internal_, this->throttle_);

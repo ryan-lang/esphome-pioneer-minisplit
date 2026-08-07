@@ -118,11 +118,11 @@ namespace esphome
             /// which now carries whichever reading the loop is actually running on.
             float internal_temp_{NAN};
 
-            /// Slow average of the above, and the value the setpoint is actually derived from.
-            /// The raw reading does not merely wobble - it steps between discrete values a
-            /// full 0.8C apart and sits there for minutes, which is larger than any sane
-            /// hysteresis band and was toggling the commanded setpoint indefinitely. Averaged
-            /// over ~5 minutes those steps become a signal the hysteresis can hold.
+            /// Slow average of the above, for the diagnostic sensor only. Was briefly used to
+            /// derive the setpoint, on the theory that the raw sensor's 0.8C steps between
+            /// discrete levels were noise worth filtering. They are, but following them is also
+            /// what holds the commanded error at the requested throttle, so smoothing here cost
+            /// 1.8x the energy. Useful to plot against the raw trace; not for control.
             float internal_temp_avg_{NAN};
 
             /// Capacity request currently being asked of the unit, in degrees C of
@@ -143,6 +143,12 @@ namespace esphome
             /// setpoint is held rather than chased.
             uint32_t action_started_ms_{0};
             uint32_t settle_time_{180000};
+
+
+            /// The mode we last queued, and when. mode_internal_ only updates once the unit
+            /// acknowledges, so two calls inside that gap would both queue the same command.
+            climate::ClimateMode last_mode_sent_{climate::CLIMATE_MODE_OFF};
+            uint32_t last_mode_command_ms_{0};
         };
     }
 }
