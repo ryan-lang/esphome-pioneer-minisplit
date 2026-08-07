@@ -80,23 +80,55 @@ namespace esphome
                                                  }
 
                                                  // Tracking TEMP change
-                                                 if (!std::isnan(state->get_float(AcState::AC_CUR_TEMP)) && (std::abs(this->current_temperature - state->get_float(AcState::AC_CUR_TEMP)) > 0.01f || std::isnan(this->current_temperature)))
-                                                 { 
+                                                 float ac_temp = state->get_float(AcState::AC_CUR_TEMP);
+                                                 if (!std::isnan(ac_temp) && (std::abs(this->internal_temp_ - ac_temp) > 0.01f || std::isnan(this->internal_temp_)))
+                                                 {
                                                     // Assume a change if difference is more than 0.01
-                                                    this->current_temperature = state->get_float(AcState::AC_CUR_TEMP);
+                                                    this->internal_temp_ = ac_temp;
 
-                                                    // required action may have changed, recompute, refresh, we'll publish_state() later
+                                                    // The throttle is computed relative to the unit's own reading, so recompute
+                                                    // even when a remote sensor is what the loop is actually tracking.
                                                     if (this->use_advanced_heat_cool_ && this->mode == climate::CLIMATE_MODE_HEAT_COOL){
                                                         this->switch_to_action_(this->compute_action_());
                                                     }
-                                                 
-                                                    climate_changed = true;
+
+                                                    float control_temp = this->control_temperature_();
+                                                    if (!std::isnan(control_temp) && (std::abs(this->current_temperature - control_temp) > 0.01f || std::isnan(this->current_temperature)))
+                                                    {
+                                                        this->current_temperature = control_temp;
+                                                        climate_changed = true;
+                                                    }
                                                  }
 
                                                  if (climate_changed)
                                                  {
                                                      this->publish_state();
                                                  } });
+
+            // listen for remote thermometer updates
+            if (this->remote_sensor_ != nullptr)
+            {
+                this->remote_sensor_->add_on_state_callback([this](float state)
+                                                            {
+                    // A wildly out-of-range reading is more likely a dead sensor reporting
+                    // garbage than a real room, and acting on it would drive the unit hard in
+                    // the wrong direction. Drop it and let it go stale instead.
+                    if (std::isnan(state) || state < 5.0f || state > 40.0f)
+                    {
+                        ESP_LOGW("climate", "remote temperature %.2f out of range, ignoring", state);
+                        return;
+                    }
+
+                    this->remote_temp_ = state;
+                    this->remote_last_ms_ = millis();
+                    this->remote_has_value_ = true;
+                    this->evaluate_(); });
+            }
+
+            // A remote sensor going quiet is the absence of an event, so nothing above will
+            // notice it. Poll the decision so the fallback actually engages.
+            this->set_interval("evaluate", 30000, [this]()
+                               { this->evaluate_(); });
 
             // restore all climate data, if possible
             auto restore = this->restore_state_();
@@ -126,16 +158,23 @@ namespace esphome
             // MODE change
             if (call.get_mode().has_value())
             {
-                uint8_t new_ac_mode;
-                bool new_ac_power;
-                esphome_mode_to_ac_mode_(*call.get_mode(), new_ac_mode, new_ac_power);
-
-                this->parent_->set_pending_parameter(AcState::AC_MODE, new_ac_mode);
-                this->parent_->set_pending_parameter(AcState::AC_POWER, new_ac_power);
-
                 // set mode optimistically
                 this->mode = *call.get_mode();
                 state_changed = true;
+
+                // In advanced heat/cool we own the unit's mode and power: switch_to_action_()
+                // below decides whether it should be cooling, heating or off. Queuing the raw
+                // HEAT_COOL mode here would put the unit in its own auto mode first and cost an
+                // extra command frame (and display flash) to correct.
+                if (!(this->use_advanced_heat_cool_ && this->mode == climate::CLIMATE_MODE_HEAT_COOL))
+                {
+                    uint8_t new_ac_mode;
+                    bool new_ac_power;
+                    esphome_mode_to_ac_mode_(*call.get_mode(), new_ac_mode, new_ac_power);
+
+                    this->parent_->set_pending_parameter(AcState::AC_MODE, new_ac_mode);
+                    this->parent_->set_pending_parameter(AcState::AC_POWER, new_ac_power);
+                }
             }
 
             // PRESET change
@@ -202,6 +241,136 @@ namespace esphome
             }
         }
 
+        bool PioneerMinisplitClimate::remote_valid_()
+        {
+            if (this->remote_sensor_ == nullptr || !this->remote_has_value_)
+            {
+                return false;
+            }
+            return (millis() - this->remote_last_ms_) < this->sensor_timeout_;
+        }
+
+        float PioneerMinisplitClimate::control_temperature_()
+        {
+            return this->remote_valid_() ? this->remote_temp_ : this->internal_temp_;
+        }
+
+        bool PioneerMinisplitClimate::control_ready_()
+        {
+            // Never having heard from a configured remote sensor is different from it having
+            // gone stale. On the stale path falling back to the unit's own sensor is the
+            // intended degraded behaviour; at boot it would mean latching a cooling or heating
+            // decision off the reading we do not trust, before the first packet has arrived.
+            if (this->remote_sensor_ != nullptr && !this->remote_has_value_)
+            {
+                return false;
+            }
+            return !std::isnan(this->control_temperature_());
+        }
+
+        void PioneerMinisplitClimate::evaluate_()
+        {
+            // Advance the slow average of the unit's own sensor. Driven from this timer rather
+            // than from each incoming frame so the time constant is predictable: alpha 0.1 on a
+            // 30s tick is roughly a 5 minute constant. Runs while idle too, so it is already
+            // warm when a cycle starts.
+            if (!std::isnan(this->internal_temp_))
+            {
+                if (std::isnan(this->internal_temp_avg_))
+                {
+                    this->internal_temp_avg_ = this->internal_temp_;
+                }
+                else
+                {
+                    this->internal_temp_avg_ += 0.1f * (this->internal_temp_ - this->internal_temp_avg_);
+                }
+            }
+
+            bool active = this->remote_valid_();
+            if (active != this->remote_active_last_)
+            {
+                this->remote_active_last_ = active;
+                ESP_LOGW("climate", "remote sensor %s - control temperature now from %s sensor",
+                         active ? "available" : "stale", active ? "remote" : "internal");
+
+                // Any setpoint committed while we had no remote reading came from the fallback
+                // path and was a guess. Drop it so the settle window cannot protect it now that
+                // we can do better - otherwise a boot, or a sender outage that recovers
+                // mid-cycle, leaves the unit running on that guess for the whole window.
+                if (active)
+                {
+                    this->committed_stmp_ = 0;
+                }
+            }
+
+            if (this->use_advanced_heat_cool_ && this->mode == climate::CLIMATE_MODE_HEAT_COOL)
+            {
+                this->switch_to_action_(this->compute_action_());
+            }
+
+            float control_temp = this->control_temperature_();
+            if (!std::isnan(control_temp) && (std::abs(this->current_temperature - control_temp) > 0.01f || std::isnan(this->current_temperature)))
+            {
+                this->current_temperature = control_temp;
+                this->publish_state();
+            }
+        }
+
+        // The unit's setpoint field is compared against its own return-air sensor, which is
+        // the thing we do not trust. So rather than sending it a setpoint and hoping, we send
+        // a value offset from what it currently believes the room to be: the inverter
+        // modulates on that difference, which turns the field into a capacity request. How
+        // much capacity we ask for is driven by the error the remote sensor reports.
+        //
+        // With no trustworthy remote reading there is nothing to derive a capacity request
+        // from, so we hand the field back to the unit's own thermostat and let it behave as
+        // it did before any of this - degraded, but never worse than stock.
+        uint8_t PioneerMinisplitClimate::compute_setpoint_(bool cooling)
+        {
+            float target = cooling ? this->target_temperature_high : this->target_temperature_low;
+
+            if (!this->remote_valid_() || std::isnan(this->internal_temp_))
+            {
+                this->throttle_ = 0;
+                this->committed_stmp_ = (uint8_t)clamp((int)lroundf(target), 16, 31);
+                return this->committed_stmp_;
+            }
+
+            float error = cooling ? (this->remote_temp_ - target) : (target - this->remote_temp_);
+            int delta = clamp((int)lroundf(error * this->throttle_gain_), 1, (int)this->max_throttle_);
+            this->throttle_ = (uint8_t)delta;
+
+            // Derive the setpoint from the smoothed reading, not the raw one. The raw value
+            // steps 0.8C at a time between discrete levels; chasing that is what produced a
+            // command every couple of minutes for no change in actual demand.
+            float reference = std::isnan(this->internal_temp_avg_) ? this->internal_temp_ : this->internal_temp_avg_;
+            float setpoint = cooling ? (reference - delta) : (reference + delta);
+
+            if (this->committed_stmp_ != 0)
+            {
+                // Starting the unit stirs the air across its own sensor, which moved 2C in the
+                // first three minutes of a real cycle. That is the fan, not the room, so there
+                // is nothing to be learned by following it - hold until it settles.
+                if ((millis() - this->action_started_ms_) < this->settle_time_)
+                {
+                    return this->committed_stmp_;
+                }
+
+                // The setpoint we send is an integer, so a value sitting near a rounding
+                // boundary would otherwise flip it back and forth forever. 1.0C rather than the
+                // 0.75 first tried here: the smoothed reference can still swing ~0.7C when the
+                // raw sensor parks on one of its discrete levels for many minutes, and 0.75 was
+                // narrow enough for that to punch through and keep the toggle alive.
+                if (std::fabs(setpoint - (float)this->committed_stmp_) < 1.0f)
+                {
+                    return this->committed_stmp_;
+                }
+            }
+
+            this->committed_stmp_ = (uint8_t)clamp((int)lroundf(setpoint), 16, 31);
+            return this->committed_stmp_;
+        }
+
         climate::ClimateAction PioneerMinisplitClimate::compute_action_()
         {
             if (this->cooling_required_())
@@ -226,23 +395,47 @@ namespace esphome
                 return;
             }
 
+            // Leave the unit in whatever state it is already in until we have a reading worth
+            // acting on. Deciding here and correcting a second later once the first remote
+            // packet lands would cost two commands and could briefly stop a running unit.
+            if (!this->control_ready_())
+            {
+                ESP_LOGD("climate", "no trustworthy reading yet - leaving unit untouched");
+                return;
+            }
+
+            // Entering an active mode starts a new cycle: the committed setpoint from the last
+            // one is meaningless now, and the settle window starts here. Must happen before the
+            // setpoint is computed below, or the first command of the cycle would hold a stale
+            // value instead of deciding fresh.
+            if (action != this->target_action_ &&
+                (action == climate::CLIMATE_ACTION_COOLING || action == climate::CLIMATE_ACTION_HEATING))
+            {
+                this->action_started_ms_ = millis();
+                this->committed_stmp_ = 0;
+            }
+
+            this->target_action_ = action;
+
             // determine new desired state
             climate::ClimateMode desired_mode;
             uint8_t desired_stmp;
             if (action == climate::CLIMATE_ACTION_COOLING)
             {
                 desired_mode = climate::CLIMATE_MODE_COOL;
-                desired_stmp = this->target_temperature_high;
+                desired_stmp = this->compute_setpoint_(true);
             }
             else if (action == climate::CLIMATE_ACTION_HEATING)
             {
                 desired_mode = climate::CLIMATE_MODE_HEAT;
-                desired_stmp = this->target_temperature_low;
+                desired_stmp = this->compute_setpoint_(false);
             }
             else
             {
                 desired_mode = climate::CLIMATE_MODE_OFF;
                 desired_stmp = 0;
+                this->throttle_ = 0;
+                this->committed_stmp_ = 0;
             }
 
             // determine if changes are occuring and we need to send a device command
@@ -259,12 +452,25 @@ namespace esphome
                 this->parent_->set_pending_parameter(AcState::AC_MODE, new_ac_mode);
                 this->parent_->set_pending_parameter(AcState::AC_POWER, new_ac_power);
             }
-            if (this->stmp_internal_ != desired_stmp && !std::isnan(desired_stmp) && desired_stmp > 0)
+            if (this->stmp_internal_ != desired_stmp && desired_stmp > 0)
             {
-                ESP_LOGI("climate", "adv. heat/cool - setting temp to %f from cur. internal temp %f", desired_stmp, this->stmp_internal_);
-                // clone the state and start building a pending state
-                // No need to prepare state anymore - just set pending parameters
-                this->parent_->set_pending_parameter(AcState::AC_STMP, desired_stmp);
+                // Every setpoint command lights the unit's display. Under throttle control the
+                // target moves with the unit's own drifting sensor, so without a floor on the
+                // command rate a bedroom would flash all night. A mode change is the actual
+                // on/off decision and is never held back.
+                uint32_t now = millis();
+                bool mode_changing = this->mode_internal_ != desired_mode;
+                if (mode_changing || this->last_stmp_command_ms_ == 0 || (now - this->last_stmp_command_ms_) >= this->min_command_interval_)
+                {
+                    ESP_LOGI("climate", "adv. heat/cool - setting temp to %u from cur. internal temp %u (throttle %u)", desired_stmp, this->stmp_internal_, this->throttle_);
+                    this->parent_->set_pending_parameter(AcState::AC_STMP, desired_stmp);
+                    this->last_stmp_command_ms_ = now;
+                }
+                else
+                {
+                    // evaluate_() runs on a 30s timer and will pick this up once eligible
+                    ESP_LOGD("climate", "adv. heat/cool - deferring setpoint %u, rate limited", desired_stmp);
+                }
             }
         }
 
@@ -277,13 +483,20 @@ namespace esphome
             }
 
             auto temperature = this->target_temperature_high;
+            float current = this->control_temperature_();
 
-            if (this->current_temperature > temperature + this->cooling_deadband_)
+            if (std::isnan(current))
+            {
+                // no reading to decide on yet; hold whatever we were doing
+                return this->target_action_ == climate::CLIMATE_ACTION_COOLING;
+            }
+
+            if (current > temperature + this->cooling_deadband_)
             {
                 // if the current temperature exceeds the target + deadband, cooling is required
                 return true;
             }
-            else if (this->current_temperature < temperature - this->cooling_overrun_)
+            else if (current < temperature - this->cooling_overrun_)
             {
                 // if the current temperature is less than the target - overrun, cooling should stop
                 return false;
@@ -292,7 +505,7 @@ namespace esphome
             {
                 // if we get here, the current temperature is between target + deadband and target - overrun,
                 //  so the action should continue whatever it was already doing
-                return this->action == climate::CLIMATE_ACTION_COOLING;
+                return this->target_action_ == climate::CLIMATE_ACTION_COOLING;
             }
         }
 
@@ -305,13 +518,20 @@ namespace esphome
             }
 
             auto temperature = this->target_temperature_low;
+            float current = this->control_temperature_();
 
-            if (this->current_temperature < temperature - this->heating_deadband_)
+            if (std::isnan(current))
+            {
+                // no reading to decide on yet; hold whatever we were doing
+                return this->target_action_ == climate::CLIMATE_ACTION_HEATING;
+            }
+
+            if (current < temperature - this->heating_deadband_)
             {
                 // if the current temperature is below the target - deadband, heating is required
                 return true;
             }
-            else if (this->current_temperature > temperature + this->heating_overrun_)
+            else if (current > temperature + this->heating_overrun_)
             {
                 // if the current temperature is above the target + overrun, heating should stop
                 return false;
@@ -320,7 +540,7 @@ namespace esphome
             {
                 // if we get here, the current temperature is between target - deadband and target + overrun,
                 //  so the action should continue whatever it was already doing
-                return this->action == climate::CLIMATE_ACTION_HEATING;
+                return this->target_action_ == climate::CLIMATE_ACTION_HEATING;
             }
         }
 
