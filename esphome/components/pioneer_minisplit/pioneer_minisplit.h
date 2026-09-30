@@ -120,26 +120,43 @@ namespace esphome
             void process_valid_data_();
             void send_pending_state_();
             void populate_command_data_(AcState *state, uint8_t *AcCmd);
+            void build_command_(AcState *state, uint8_t *AcCmd);
             void calculate_and_set_checksum_(uint8_t *AcCmd);
             void send_heartbeat_if_required_();
+            int8_t find_or_add_pending_(AcState::ParameterType param);
 
             static const uint8_t TOTAL_COMMANDS = 13;
             static const uint8_t COMMAND_LENGTH = 31;
+            // Minimum time before an identical command frame may be sent again. The unit lights
+            // its display every time it accepts a command, so a change it refuses to apply must
+            // not turn into a resend loop.
+            static const unsigned long RESEND_INTERVAL_MS = 60000;
             std::vector<AcStateListener> listeners_;
             uint8_t rx_pos = 0;
             uint8_t rx_line[70];
             uint8_t rx_line_last[70];
             unsigned long minidelay = 0;
             unsigned long hbeat = 0;
-            bool has_state_ack = true;
+            // Starts false so that state restored at boot is never sent as a command built on
+            // top of an all-zero state - that frame would be wrong and would flash the display.
+            bool has_state_ack = false;
             
             // Pending state management - only track changed parameters
             static const uint8_t MAX_PENDING_CHANGES = 16;
             uint8_t pending_params[MAX_PENDING_CHANGES];
             uint8_t pending_values[MAX_PENDING_CHANGES];
             float pending_float_values[MAX_PENDING_CHANGES];
+            bool pending_is_float[MAX_PENDING_CHANGES];
             uint8_t pending_change_count = 0;
             AcState pending_state_buffer;  // Reusable buffer for pending state
+
+            // Last command frame actually written to the unit, and the frame describing the
+            // unit's own state at that moment. Used to suppress repeats of a change the unit
+            // did not act on.
+            uint8_t last_cmd[COMMAND_LENGTH];
+            uint8_t last_state_cmd[COMMAND_LENGTH];
+            unsigned long last_cmd_time = 0;
+            bool has_last_cmd = false;
         };
 
     }

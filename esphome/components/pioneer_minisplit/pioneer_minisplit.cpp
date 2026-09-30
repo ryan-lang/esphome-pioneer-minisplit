@@ -25,44 +25,46 @@ namespace esphome
             this->listeners_.push_back(listener);
         }
 
+        // Find the pending slot for a parameter, allocating one if needed.
+        // Returns -1 when the pending list is full.
+        int8_t PioneerMinisplit::find_or_add_pending_(AcState::ParameterType param)
+        {
+            for (uint8_t i = 0; i < pending_change_count; i++) {
+                if (pending_params[i] == param) {
+                    return i;
+                }
+            }
+
+            if (pending_change_count >= MAX_PENDING_CHANGES) {
+                return -1;
+            }
+
+            pending_params[pending_change_count] = param;
+            return pending_change_count++;
+        }
+
         // Add a parameter change to the pending list
         void PioneerMinisplit::set_pending_parameter(AcState::ParameterType param, uint8_t value)
         {
-            // Check if this parameter is already in the pending list
-            for (uint8_t i = 0; i < pending_change_count; i++) {
-                if (pending_params[i] == param) {
-                    pending_values[i] = value;
-                    return;
-                }
-            }
-            
-            // Add new pending change if there's room
-            if (pending_change_count < MAX_PENDING_CHANGES) {
-                pending_params[pending_change_count] = param;
-                pending_values[pending_change_count] = value;
-                pending_change_count++;
-            }
+            int8_t i = this->find_or_add_pending_(param);
+            if (i < 0)
+                return;
+
+            pending_values[i] = value;
+            pending_is_float[i] = false;
         }
-        
+
         // Add a float parameter change to the pending list
         void PioneerMinisplit::set_pending_parameter_float(AcState::ParameterType param, float value)
         {
-            // Check if this parameter is already in the pending list
-            for (uint8_t i = 0; i < pending_change_count; i++) {
-                if (pending_params[i] == param) {
-                    pending_float_values[i] = value;
-                    return;
-                }
-            }
-            
-            // Add new pending change if there's room
-            if (pending_change_count < MAX_PENDING_CHANGES) {
-                pending_params[pending_change_count] = param;
-                pending_float_values[pending_change_count] = value;
-                pending_change_count++;
-            }
+            int8_t i = this->find_or_add_pending_(param);
+            if (i < 0)
+                return;
+
+            pending_float_values[i] = value;
+            pending_is_float[i] = true;
         }
-        
+
         // Clear all pending changes
         void PioneerMinisplit::clear_pending_changes()
         {
@@ -79,12 +81,12 @@ namespace esphome
             // Copy current state to buffer
             pending_state_buffer.copy_from(ac_state);
             
-            // Apply pending changes
+            // Apply pending changes, into whichever store the caller wrote them to.
+            // Deriving this from the parameter type instead would put values like AC_STMP
+            // in the float store while the command builder reads them from the byte store.
             for (uint8_t i = 0; i < pending_change_count; i++) {
                 AcState::ParameterType param = static_cast<AcState::ParameterType>(pending_params[i]);
-                if (param == AcState::AC_STMP || param == AcState::AC_CUR_TEMP || 
-                    param == AcState::AC_TEMP_PIPE_OUT || param == AcState::AC_TEMP_PIPE_IN ||
-                    param == AcState::AC_COMPRESSOR_CURRENT || param == AcState::AC_SUPPLY_VOLTAGE) {
+                if (pending_is_float[i]) {
                     pending_state_buffer.set_float(param, pending_float_values[i]);
                 } else {
                     pending_state_buffer.set(param, pending_values[i]);
@@ -249,12 +251,43 @@ namespace esphome
             if (!this->has_state_ack || !this->has_pending_changes())
                 return;
 
+            // Get the pending state (combines current state with pending changes)
+            AcState *state_pending = this->get_pending_state();
+
+            uint8_t AcCmd[this->COMMAND_LENGTH] = {};
+            this->build_command_(state_pending, AcCmd);
+
+            // The unit lights its display for a few seconds every time it accepts a command,
+            // so only write a frame that actually asks the unit for something different.
+            // A pending change can be a no-op when e.g. a schedule re-applies settings the
+            // unit already holds. The clamping populate_command_data_() does is harmless
+            // here: every value the unit reports is already in range.
+            uint8_t cur_cmd[this->COMMAND_LENGTH] = {};
+            this->build_command_(this->ac_state, cur_cmd);
+            if (std::memcmp(AcCmd, cur_cmd, this->COMMAND_LENGTH) == 0)
+            {
+                ESP_LOGD("pioneer", ">>> skipping command, unit is already in the requested state");
+                this->clear_pending_changes();
+                return;
+            }
+
+            // Asking again for exactly what we last asked for, of a unit that has not moved
+            // since, means it did not apply the change. Retrying on every state response would
+            // blink the display continuously, so back off. Both halves matter: if the unit did
+            // move in the meantime this is a genuine new request and must go out immediately.
+            if (this->has_last_cmd &&
+                std::memcmp(AcCmd, this->last_cmd, this->COMMAND_LENGTH) == 0 &&
+                std::memcmp(cur_cmd, this->last_state_cmd, this->COMMAND_LENGTH) == 0 &&
+                millis() - this->last_cmd_time < this->RESEND_INTERVAL_MS)
+            {
+                ESP_LOGD("pioneer", ">>> skipping command, unit ignored the same frame %lums ago", millis() - this->last_cmd_time);
+                this->clear_pending_changes();
+                return;
+            }
+
             // prevents sending a 2nd command while waiting for response from first
             // also don't send a command before we've received the first state response
             this->has_state_ack = 0;
-
-            // Get the pending state (combines current state with pending changes)
-            AcState *state_pending = this->get_pending_state();
 
             // special handling for BEEP, which is not tracked in device state payload
             if (state_pending->get(AcState::AC_BEEP) != this->ac_state->get(AcState::AC_BEEP))
@@ -262,15 +295,28 @@ namespace esphome
                 this->ac_state->set(AcState::AC_BEEP, state_pending->get(AcState::AC_BEEP));
             }
 
-            uint8_t AcCmd[this->COMMAND_LENGTH] = {};
-            this->populate_command_data_(state_pending, AcCmd);
-            this->calculate_and_set_checksum_(AcCmd);
+            ESP_LOGD("pioneer", ">>> sending command: power=%d mode=%d stmp=%d fan=%d display=%d",
+                     state_pending->get(AcState::AC_POWER), state_pending->get(AcState::AC_MODE),
+                     state_pending->get(AcState::AC_STMP), state_pending->get(AcState::AC_FAN),
+                     state_pending->get(AcState::AC_DISPLAY));
 
             this->write_array(AcCmd, this->COMMAND_LENGTH);
             this->hbeat = millis();
-            
+
+            std::memcpy(this->last_cmd, AcCmd, this->COMMAND_LENGTH);
+            std::memcpy(this->last_state_cmd, cur_cmd, this->COMMAND_LENGTH);
+            this->last_cmd_time = millis();
+            this->has_last_cmd = true;
+
             // Clear pending changes after sending
             this->clear_pending_changes();
+        }
+
+        // build a complete, checksummed command frame for a given state
+        void PioneerMinisplit::build_command_(AcState *state, uint8_t *AcCmd)
+        {
+            this->populate_command_data_(state, AcCmd);
+            this->calculate_and_set_checksum_(AcCmd);
         }
 
         // populate the AcCmd buffer with the current state
@@ -291,12 +337,12 @@ namespace esphome
             AcCmd[7] |= (state->get(AcState::AC_BEEP) ? 1 : 0) << 5;
             AcCmd[7] |= (state->get(AcState::AC_DISPLAY) ? 1 : 0) << 6;
             AcCmd[7] |= (state->get(AcState::AC_ECO) ? 1 : 0) << 7;
-            ESP_LOGD("pioneer", ">>> [7]: 0x%02X", AcCmd[7]);
+            ESP_LOGV("pioneer", ">>> [7]: 0x%02X", AcCmd[7]);
 
             AcCmd[8] = 0;
             AcCmd[8] = modeMap[state->get(AcState::AC_MODE)];
             AcCmd[8] |= (state->get(AcState::AC_TURBO) ? 1 : 0) << 6;
-            ESP_LOGD("pioneer", ">>> [8]: 0x%02X", AcCmd[8]);
+            ESP_LOGV("pioneer", ">>> [8]: 0x%02X", AcCmd[8]);
 
             // enforce min/max
             if (state->get(AcState::AC_STMP) < 16)
@@ -308,7 +354,7 @@ namespace esphome
                 state->set(AcState::AC_STMP, 31);
             }
             AcCmd[9] = 31 - state->get(AcState::AC_STMP);
-            ESP_LOGD("pioneer", ">>> [9]: 0x%02X", AcCmd[9]);
+            ESP_LOGV("pioneer", ">>> [9]: 0x%02X", AcCmd[9]);
 
             AcCmd[10] = 0;
             AcCmd[10] = fanMap[state->get(AcState::AC_FAN)];
@@ -316,14 +362,14 @@ namespace esphome
             {
                 AcCmd[10] |= (1 << 3) | (1 << 4) | (1 << 5);
             }
-            ESP_LOGD("pioneer", ">>> [10]: 0x%02X", AcCmd[10]);
+            ESP_LOGV("pioneer", ">>> [10]: 0x%02X", AcCmd[10]);
 
             AcCmd[14] = 0;
             if (state->get(AcState::AC_SWING_H))
             {
                 AcCmd[14] |= (1 << 3) | (1 << 4) | (1 << 5);
             }
-            ESP_LOGD("pioneer", ">>> [14]: 0x%02X", AcCmd[14]);
+            ESP_LOGV("pioneer", ">>> [14]: 0x%02X", AcCmd[14]);
 
             AcCmd[19] = state->get(AcState::AC_SLEEP) ? 1 : 0;
         }
