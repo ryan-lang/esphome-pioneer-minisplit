@@ -24,7 +24,7 @@ namespace esphome
                                                     // - CLIMATE_MODE_HEAT_COOL
                                                     // CLIMATE_MODE_HEAT_COOL is overloaded to also mean CLIMATE_MODE_COOL & CLIMATE_MODE_HEAT
 
-                                                    if (new_mode == climate::CLIMATE_MODE_COOL || new_mode == climate::CLIMATE_MODE_HEAT)
+                                                    if (new_mode == climate::CLIMATE_MODE_COOL || new_mode == climate::CLIMATE_MODE_HEAT || new_mode == climate::CLIMATE_MODE_OFF)
                                                     {
                                                         new_mode = climate::CLIMATE_MODE_HEAT_COOL;
                                                     }
@@ -237,12 +237,6 @@ namespace esphome
                 if (this->use_advanced_heat_cool_ && this->mode == climate::CLIMATE_MODE_HEAT_COOL)
                 {
                     this->switch_to_action_(this->compute_action_());
-                }
-                if (this->mode == climate::CLIMATE_MODE_OFF)
-                {
-                    this->target_action_ = climate::CLIMATE_ACTION_IDLE;
-                    this->committed_stmp_ = 0;
-                    this->last_commanded_stmp_ = 0;
                 }
                 this->refresh_diagnostics_();
                 this->publish_state();
@@ -660,7 +654,6 @@ namespace esphome
             {
                 traits.set_supports_two_point_target_temperature(true);
                 traits.set_supported_modes({climate::CLIMATE_MODE_FAN_ONLY,
-                                            climate::CLIMATE_MODE_OFF,
                                             climate::CLIMATE_MODE_DRY,
                                             climate::CLIMATE_MODE_HEAT_COOL});
             }
