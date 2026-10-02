@@ -34,6 +34,12 @@ namespace esphome
             uint8_t commanded_throttle() { return this->throttle_; }
             float internal_temperature() { return this->internal_temp_; }
             float internal_temperature_avg() { return this->internal_temp_avg_; }
+            float control_temperature() { return this->control_temperature_(); }
+            float last_commanded_setpoint() {
+                return this->last_commanded_stmp_ == 0 ? NAN : static_cast<float>(this->last_commanded_stmp_);
+            }
+            const char *control_source() { return this->control_source_; }
+            const char *control_reason() { return this->control_reason_; }
 
             /// The four thresholds the hysteresis actually switches on, so they can be plotted
             /// alongside the temperature traces. The displayed target temperatures are rounded
@@ -78,6 +84,7 @@ namespace esphome
             /// Re-run the control decision and republish; called on a timer so that a remote
             /// sensor going stale is noticed even when nothing else changes.
             void evaluate_();
+            void refresh_diagnostics_();
 
             climate::ClimateMode ac_mode_to_esphome_mode_(uint8_t ac_mode, bool ac_power);
             void esphome_mode_to_ac_mode_(climate::ClimateMode mode, uint8_t &ac_mode, bool &ac_power);
@@ -137,6 +144,13 @@ namespace esphome
             /// The setpoint we have decided on, held across recomputes so that a wobbling
             /// internal sensor cannot toggle it. 0 means "nothing decided yet, compute fresh".
             uint8_t committed_stmp_{0};
+            uint8_t last_commanded_stmp_{0};
+
+            /// Compact, human-readable explanation for the edge controller's
+            /// current decision. These are static strings to avoid heap use on
+            /// the ESP8266 and are exposed through template text sensors.
+            const char *control_source_{"waiting"};
+            const char *control_reason_{"waiting_for_sensor"};
 
             /// When we last switched the unit into an active mode. For the first settle_time_
             /// after that the unit's sensor is still reacting to its own fan starting, so the

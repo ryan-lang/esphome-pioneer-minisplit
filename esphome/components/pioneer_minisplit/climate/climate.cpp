@@ -24,7 +24,7 @@ namespace esphome
                                                     // - CLIMATE_MODE_HEAT_COOL
                                                     // CLIMATE_MODE_HEAT_COOL is overloaded to also mean CLIMATE_MODE_COOL & CLIMATE_MODE_HEAT
 
-                                                    if (new_mode == climate::CLIMATE_MODE_COOL || new_mode == climate::CLIMATE_MODE_HEAT || new_mode == climate::CLIMATE_MODE_OFF)
+                                                    if (new_mode == climate::CLIMATE_MODE_COOL || new_mode == climate::CLIMATE_MODE_HEAT)
                                                     {
                                                         new_mode = climate::CLIMATE_MODE_HEAT_COOL;
                                                     }
@@ -145,6 +145,7 @@ namespace esphome
             {
                 this->switch_to_action_(this->compute_action_());
             }
+            this->refresh_diagnostics_();
             this->publish_state();
         }
 
@@ -237,6 +238,13 @@ namespace esphome
                 {
                     this->switch_to_action_(this->compute_action_());
                 }
+                if (this->mode == climate::CLIMATE_MODE_OFF)
+                {
+                    this->target_action_ = climate::CLIMATE_ACTION_IDLE;
+                    this->committed_stmp_ = 0;
+                    this->last_commanded_stmp_ = 0;
+                }
+                this->refresh_diagnostics_();
                 this->publish_state();
             }
         }
@@ -308,11 +316,75 @@ namespace esphome
                 this->switch_to_action_(this->compute_action_());
             }
 
+            this->refresh_diagnostics_();
+
             float control_temp = this->control_temperature_();
             if (!std::isnan(control_temp) && (std::abs(this->current_temperature - control_temp) > 0.01f || std::isnan(this->current_temperature)))
             {
                 this->current_temperature = control_temp;
                 this->publish_state();
+            }
+        }
+
+        void PioneerMinisplitClimate::refresh_diagnostics_()
+        {
+            if (this->remote_sensor_ == nullptr)
+            {
+                this->control_source_ = "internal";
+            }
+            else if (!this->remote_has_value_)
+            {
+                this->control_source_ = "waiting";
+            }
+            else if (this->remote_valid_())
+            {
+                this->control_source_ = "remote";
+            }
+            else
+            {
+                this->control_source_ = "internal_fallback";
+            }
+
+            if (this->mode == climate::CLIMATE_MODE_OFF)
+            {
+                this->control_reason_ = "off";
+                return;
+            }
+            if (this->mode != climate::CLIMATE_MODE_HEAT_COOL)
+            {
+                this->control_reason_ = "manual_mode";
+                return;
+            }
+            if (!this->control_ready_())
+            {
+                this->control_reason_ = "waiting_for_sensor";
+                return;
+            }
+
+            float temperature = this->control_temperature_();
+            if (std::isnan(temperature))
+            {
+                this->control_reason_ = "waiting_for_sensor";
+            }
+            else if (this->target_action_ == climate::CLIMATE_ACTION_COOLING)
+            {
+                this->control_reason_ = temperature > this->target_temperature_high + this->cooling_deadband_
+                                             ? "cooling_demand"
+                                             : "cooling_latched";
+            }
+            else if (this->target_action_ == climate::CLIMATE_ACTION_HEATING)
+            {
+                this->control_reason_ = temperature < this->target_temperature_low - this->heating_deadband_
+                                             ? "heating_demand"
+                                             : "heating_latched";
+            }
+            else if (this->committed_stmp_ != 0 && this->last_commanded_stmp_ != this->stmp_internal_)
+            {
+                this->control_reason_ = "setpoint_pending";
+            }
+            else
+            {
+                this->control_reason_ = "within_hysteresis";
             }
         }
 
@@ -440,6 +512,8 @@ namespace esphome
                 this->throttle_ = 0;
                 this->committed_stmp_ = 0;
             }
+
+            this->last_commanded_stmp_ = desired_stmp;
 
             // determine if changes are occuring and we need to send a device command
             bool is_state_changing = false;
@@ -586,6 +660,7 @@ namespace esphome
             {
                 traits.set_supports_two_point_target_temperature(true);
                 traits.set_supported_modes({climate::CLIMATE_MODE_FAN_ONLY,
+                                            climate::CLIMATE_MODE_OFF,
                                             climate::CLIMATE_MODE_DRY,
                                             climate::CLIMATE_MODE_HEAT_COOL});
             }
