@@ -57,6 +57,7 @@ bool ECSProgram::load_schedule_() {
     this->schedule_ = b;
     this->active_slot_ = 1;
   }
+  this->format_hash_();
   return true;
 }
 
@@ -67,11 +68,11 @@ bool ECSProgram::valid_schedule_(const StoredSchedule &schedule) const {
     return false;
   if (schedule.fallback_state >= schedule.state_count)
     return false;
-  if (schedule.timezone[0] == '\0' || schedule.hash[0] == '\0')
-    return false;
-  if (strnlen(schedule.timezone, TIMEZONE_SIZE) >= TIMEZONE_SIZE || strnlen(schedule.hash, HASH_SIZE) >= HASH_SIZE)
-    return false;
-  if (this->expected_timezone_[0] != '\0' && strcmp(schedule.timezone, this->expected_timezone_.data()) != 0)
+  bool has_hash = false;
+  for (const auto byte : schedule.hash) {
+    has_hash = has_hash || byte != 0;
+  }
+  if (!has_hash)
     return false;
   for (uint8_t i = 0; i < schedule.transition_count; i++) {
     const auto &transition = schedule.transitions[i];
@@ -97,18 +98,26 @@ bool ECSProgram::decode_packet_(std::span<const uint8_t> packet, StoredSchedule 
   if (timezone_length == 0 || timezone_length >= TIMEZONE_SIZE || pos + timezone_length > packet.size())
     return false;
 
+  if (this->expected_timezone_[0] != '\0' &&
+      (timezone_length != strlen(this->expected_timezone_.data()) ||
+       memcmp(packet.data() + pos, this->expected_timezone_.data(), timezone_length) != 0))
+    return false;
+
   candidate = StoredSchedule{};
   candidate.magic = magic;
   candidate.version = version;
   candidate.valid = 1;
   candidate.revision = revision;
-  memcpy(candidate.timezone, packet.data() + pos, timezone_length);
-  candidate.timezone[timezone_length] = '\0';
   pos += timezone_length;
-  if (!read_le(packet, pos, hash_length) || hash_length == 0 || hash_length >= HASH_SIZE || pos + hash_length > packet.size())
+  if (!read_le(packet, pos, hash_length) || hash_length != HASH_HEX_SIZE || pos + hash_length > packet.size())
     return false;
-  memcpy(candidate.hash, packet.data() + pos, hash_length);
-  candidate.hash[hash_length] = '\0';
+  for (size_t i = 0; i < HASH_SIZE; i++) {
+    const int high = hex_value_(packet[pos + i * 2]);
+    const int low = hex_value_(packet[pos + i * 2 + 1]);
+    if (high < 0 || low < 0)
+      return false;
+    candidate.hash[i] = static_cast<uint8_t>((high << 4) | low);
+  }
   pos += hash_length;
   if (!read_le(packet, pos, fallback) || !read_le(packet, pos, state_count) ||
       !read_le(packet, pos, transition_count) || !read_le(packet, pos, reserved))
@@ -177,9 +186,13 @@ void ECSProgram::process_packet(std::span<const uint8_t> packet) {
     ESP_LOGE(TAG, "Could not persist schedule revision %lu", static_cast<unsigned long>(candidate.revision));
     return;
   }
-  global_preferences->sync();
+  if (!global_preferences->sync()) {
+    ESP_LOGE(TAG, "Could not commit schedule revision %lu", static_cast<unsigned long>(candidate.revision));
+    return;
+  }
   this->schedule_ = candidate;
   this->active_slot_ = target_slot;
+  this->format_hash_();
   this->active_state_ = -1;
   ESP_LOGI(TAG, "Installed cached ECS schedule revision %lu", static_cast<unsigned long>(candidate.revision));
   this->evaluate_();
@@ -251,6 +264,25 @@ void ECSProgram::publish_diagnostics_() {
   if (this->active_state_ < 0 || this->active_state_ >= this->schedule_.state_count)
     return;
   std::snprintf(this->active_profile_.data(), this->active_profile_.size(), "state_%d", this->active_state_);
+}
+
+void ECSProgram::format_hash_() {
+  static constexpr char HEX_DIGITS[] = "0123456789abcdef";
+  for (size_t i = 0; i < HASH_SIZE; i++) {
+    this->active_hash_[i * 2] = HEX_DIGITS[this->schedule_.hash[i] >> 4];
+    this->active_hash_[i * 2 + 1] = HEX_DIGITS[this->schedule_.hash[i] & 0x0f];
+  }
+  this->active_hash_[HASH_HEX_SIZE] = '\0';
+}
+
+int ECSProgram::hex_value_(uint8_t value) {
+  if (value >= '0' && value <= '9')
+    return value - '0';
+  if (value >= 'a' && value <= 'f')
+    return value - 'a' + 10;
+  if (value >= 'A' && value <= 'F')
+    return value - 'A' + 10;
+  return -1;
 }
 
 uint32_t ECSProgram::crc32_(const uint8_t *data, size_t size) {

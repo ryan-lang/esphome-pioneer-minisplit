@@ -8,6 +8,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <span>
 
 namespace esphome::ecs_program {
@@ -17,7 +18,10 @@ class ECSProgram : public Component {
   void set_udp(udp::UDPComponent *udp) { this->udp_ = udp; }
   void set_time(time::RealTimeClock *time) { this->time_ = time; }
   void set_climate(climate::Climate *climate) { this->climate_ = climate; }
-  void set_timezone(const char *timezone) { strncpy(this->expected_timezone_.data(), timezone, this->expected_timezone_.size() - 1); }
+  void set_timezone(const char *timezone) {
+    this->expected_timezone_.fill('\0');
+    strncpy(this->expected_timezone_.data(), timezone, this->expected_timezone_.size() - 1);
+  }
 
   void setup() override;
   void dump_config() override;
@@ -26,7 +30,7 @@ class ECSProgram : public Component {
   // memory before it can replace the persisted active schedule.
   void process_packet(std::span<const uint8_t> packet);
 
-  const char *active_hash() const { return this->schedule_.hash; }
+  const char *active_hash() const { return this->active_hash_.data(); }
   uint32_t active_revision() const { return this->schedule_.revision; }
   const char *active_profile() const { return this->active_profile_.data(); }
   bool has_schedule() const { return this->schedule_.valid; }
@@ -35,9 +39,13 @@ class ECSProgram : public Component {
   static constexpr uint32_t PACKET_MAGIC = 0x31534345;  // "ECS1"
   static constexpr uint8_t PACKET_VERSION = 1;
   static constexpr uint8_t PACKET_KIND_SCHEDULE = 1;
-  static constexpr uint8_t MAX_STATES = 8;
-  static constexpr uint8_t MAX_TRANSITIONS = 32;
-  static constexpr size_t HASH_SIZE = 65;
+  // Two preference slots must fit in the 256-byte ESP8266 preferences
+  // sector. The wire packet remains self-describing; this is the bounded
+  // persistent representation used after decoding it.
+  static constexpr uint8_t MAX_STATES = 4;
+  static constexpr uint8_t MAX_TRANSITIONS = 8;
+  static constexpr size_t HASH_SIZE = 32;
+  static constexpr size_t HASH_HEX_SIZE = HASH_SIZE * 2;
   static constexpr size_t TIMEZONE_SIZE = 64;
   static constexpr uint32_t PREFERENCE_KEY_A = 0x45435350;
   static constexpr uint32_t PREFERENCE_KEY_B = 0x45435351;
@@ -66,12 +74,15 @@ class ECSProgram : public Component {
     uint8_t fallback_state{0};
     uint8_t state_count{0};
     uint8_t transition_count{0};
-    char timezone[TIMEZONE_SIZE]{};
-    char hash[HASH_SIZE]{};
+    uint8_t hash[HASH_SIZE]{};
     State states[MAX_STATES]{};
     Transition transitions[MAX_TRANSITIONS]{};
     uint32_t checksum{0};
   } __attribute__((packed));
+
+  static_assert(sizeof(StoredSchedule) == 109, "compact schedule layout changed");
+  static_assert(((sizeof(StoredSchedule) + 3) / 4 + 1) * 2 <= 64,
+                "two compact schedule preference slots must fit in ESP8266 storage");
 
   void evaluate_();
   bool decode_packet_(std::span<const uint8_t> packet, StoredSchedule &candidate);
@@ -80,7 +91,9 @@ class ECSProgram : public Component {
   void apply_state_(const State &state);
   int current_state_(const ESPTime &now) const;
   void publish_diagnostics_();
+  void format_hash_();
   static uint32_t crc32_(const uint8_t *data, size_t size);
+  static int hex_value_(uint8_t value);
   static const char *mode_name_(uint8_t mode);
   static const char *fan_name_(uint8_t fan);
   static const char *preset_name_(uint8_t preset);
@@ -93,6 +106,7 @@ class ECSProgram : public Component {
   StoredSchedule schedule_{};
   int8_t active_slot_{-1};
   int active_state_{-1};
+  std::array<char, HASH_HEX_SIZE + 1> active_hash_{};
   std::array<char, 32> active_profile_{};
   std::array<char, 64> expected_timezone_{};
 };
