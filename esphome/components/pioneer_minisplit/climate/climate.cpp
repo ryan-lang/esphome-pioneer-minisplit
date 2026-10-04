@@ -7,6 +7,10 @@ namespace esphome
 
         void PioneerMinisplitClimate::setup()
         {
+            // The Pioneer protocol has no humidity setpoint of its own. Keep a standard
+            // ESPHome target as policy metadata so ECS can provide the room objective while
+            // retaining the decision between COOL, DRY, and OFF upstream.
+            this->target_humidity = 50.0f;
 
             // listen for device state changes
             this->parent_->register_listener([this](AcState *state)
@@ -206,11 +210,29 @@ namespace esphome
                     state_changed = true;
                 }
             }
+
             else
             {
                 if (call.get_target_temperature().has_value())
                 {
                     this->parent_->set_pending_parameter(AcState::AC_STMP, *call.get_target_temperature());
+                }
+            }
+
+            // HUMIDITY TARGET change. This is intentionally not translated into a Pioneer
+            // UART command: the unit has no humidity setpoint field, and ECS owns the choice
+            // of whether a humidity objective warrants DRY, COOL, or no action.
+            if (call.get_target_humidity().has_value())
+            {
+                float target_humidity = *call.get_target_humidity();
+                if (std::isfinite(target_humidity) && target_humidity >= 0.0f && target_humidity <= 100.0f)
+                {
+                    this->target_humidity = target_humidity;
+                    state_changed = true;
+                }
+                else
+                {
+                    ESP_LOGW("climate", "ignoring invalid target humidity %.2f%%", target_humidity);
                 }
             }
 
@@ -634,6 +656,7 @@ namespace esphome
         {
             auto traits = climate::ClimateTraits();
             traits.set_supports_current_temperature(true);
+            traits.set_supports_target_humidity(true);
             traits.set_supports_action(true);
             traits.set_supported_fan_modes({climate::CLIMATE_FAN_AUTO,
                                             climate::CLIMATE_FAN_LOW,
@@ -649,6 +672,8 @@ namespace esphome
                                           climate::CLIMATE_PRESET_SLEEP});
             traits.set_visual_min_temperature(16);
             traits.set_visual_max_temperature(31);
+            traits.set_visual_min_humidity(0);
+            traits.set_visual_max_humidity(100);
 
             if (this->use_advanced_heat_cool_)
             {
